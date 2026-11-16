@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { describeGroupAction, inverseGroupAction, normalizeGroupAction } from '../src/shared/group-actions.ts';
+import { PermanentError } from '../src/main/errors.ts';
 import { Scheduler } from '../src/main/scheduler.ts';
 import { Store, type DueMessage } from '../src/main/store.ts';
 
@@ -59,6 +60,21 @@ describe('group actions', () => {
     assert.equal(applied.length, 1);
     assert.deepEqual(applied[0]!.groupAction, { type: 'announce', enabled: true });
     assert.equal(store.listScheduled()[0]!.status, 'pending'); // daily: next run scheduled
+  });
+
+  it('fails a change straight away when retrying cannot help (not an admin)', async () => {
+    const store = new Store(':memory:');
+    store.createScheduled({
+      target: 'group',
+      chatId: GROUP,
+      body: '',
+      sendAt: Date.now() - 1000, // just due: an ordinary error would be retried
+      rule: { repeat: 'none' },
+      groupAction: { type: 'announce', enabled: true },
+    });
+    const sender = { isOpen: true, sendScheduled: async () => { throw new PermanentError("You're not an admin of this group."); } };
+    await new Scheduler(store, sender, () => undefined, { gapMs: 0 }).runNow();
+    assert.equal(store.listScheduled()[0]!.status, 'failed');
   });
 
   it('marks a group change failed with the reason when it cannot be applied', async () => {

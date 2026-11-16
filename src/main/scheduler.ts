@@ -2,6 +2,7 @@
 // Runs in the main process, so it keeps working while the window is closed to the tray.
 
 import { nextOccurrence } from '../shared/schedule.ts';
+import { isPermanent } from './errors.ts';
 import type { DueMessage, Store } from './store';
 
 export { nextOccurrence };
@@ -92,7 +93,7 @@ export class Scheduler {
           this.store.setScheduledStatus(item.id, 'pending', { sendAt: next, sentAt, error: null });
         }
       } catch (err) {
-        const giveUp = Date.now() - item.sendAt > RETRY_FOR_MS;
+        const giveUp = isPermanent(err) || Date.now() - item.sendAt > RETRY_FOR_MS;
         this.store.setScheduledStatus(item.id, giveUp ? 'failed' : 'pending', { error: errorMessage(err) });
       }
       this.onChange();

@@ -28,6 +28,7 @@ import makeWASocket, {
 import pino from 'pino';
 import QRCode from 'qrcode';
 import type { AppEvent, ChatMessage, ConnectionState, GroupAction, GroupInfo } from '../shared/types';
+import { PermanentError } from './errors';
 import { describeFile, mediaFileName, writeTempFile } from './media';
 import { parseMessage, reviveMessage, toAck } from './messages';
 import { webmOpusToOgg } from './opus-ogg';
@@ -217,7 +218,7 @@ export class WhatsApp {
   async sendScheduled(item: Pick<DueMessage, 'target' | 'chatId' | 'body' | 'attachment' | 'groupAction'>): Promise<void> {
     const { target, body, attachment } = item;
     if (target === 'group') {
-      if (!item.groupAction) throw new Error('This scheduled group change has no setting to apply.');
+      if (!item.groupAction) throw new PermanentError('This scheduled group change has no setting to apply.');
       await this.applyGroupAction(item.chatId, item.groupAction);
       return;
     }
@@ -353,7 +354,7 @@ export class WhatsApp {
     const sock = this.requireSocket();
     const meta = await sock.groupMetadata(chatId);
     if (!this.amAdminOf(sock, meta)) {
-      throw new Error("You're not an admin of this group, so its settings can't be changed.");
+      throw new PermanentError("You're not an admin of this group, so its settings can't be changed.");
     }
     switch (action.type) {
       case 'announce':
