@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { dialog, ipcMain, shell, systemPreferences } from 'electron';
 import { inverseGroupAction, normalizeGroupAction } from '../shared/group-actions';
 import { firstOccurrence, normalizeRule } from '../shared/schedule';
+import { isValidZone, localZone, parseWallTime, zoneCity, zoneForPhone } from '../shared/timezones';
 import type { ChatAction, ContactCard, GroupAction, MemberAction, RepeatRule, RichContent, ScheduleTarget } from '../shared/types';
 import type { Account } from './account';
 import type { Accounts } from './accounts';
@@ -48,6 +49,26 @@ interface ParsedScheduleInput {
   attachmentPath?: string | null;
   groupAction?: GroupAction;
   revertAt?: number;
+  wallTime?: string;
+  /** An IANA zone, or 'recipient'. */
+  timeZone?: string;
+}
+
+/**
+ * When and how often one recipient gets the message. With a wall time and a zone, the time
+ * is that wall-clock time in the zone ('recipient': the zone of the person's phone number).
+ */
+function timingFor(input: ParsedScheduleInput, chatId: string): { sendAt: number; rule: RepeatRule } {
+  if (!input.wallTime || !input.timeZone) return { sendAt: input.sendAt, rule: input.rule };
+  const { timeZone: _old, ...base } = input.rule;
+  const zone = input.timeZone === 'recipient' ? zoneForPhone(chatId)?.zone : input.timeZone;
+  const effective = zone ?? localZone();
+  const sendAt = parseWallTime(input.wallTime, effective);
+  if (Number.isNaN(sendAt)) throw new Error('Pick a date and time.');
+  if (sendAt < Date.now() - 60_000) {
+    throw new Error(`${input.wallTime.replace('T', ' ')} in ${zoneCity(effective)} has already passed. Pick a later time.`);
+  }
+  return { sendAt, rule: zone ? { ...base, timeZone: zone } : base };
 }
 
 function parseScheduleInput(value: unknown): ParsedScheduleInput {
@@ -88,7 +109,17 @@ function parseScheduleInput(value: unknown): ParsedScheduleInput {
   }
   const body = optionalString(input.body).trim();
   if (!body && !attachmentPath) throw new Error('Write a message or attach a file.');
-  return { target, chatIds, body, sendAt, rule, attachmentPath };
+  let wallTime: string | undefined;
+  let timeZone: string | undefined;
+  if (target === 'chat' && input.timeZone !== undefined && input.timeZone !== null) {
+    if (typeof input.wallTime !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(input.wallTime)) {
+      throw new Error('Pick a date and time.');
+    }
+    if (input.timeZone !== 'recipient' && !isValidZone(input.timeZone)) throw new Error('Unknown time zone.');
+    wallTime = input.wallTime;
+    timeZone = input.timeZone as string;
+  }
+  return { target, chatIds, body, sendAt, rule, attachmentPath, wallTime, timeZone };
 }
 
 /**
@@ -417,10 +448,11 @@ export function registerIpc(ctx: IpcContext): void {
     const attachment: Attachment | null = input.attachmentPath
       ? await keepAttachment(input.attachmentPath, a.attachmentsDir)
       : null;
-    const sendAt = firstOccurrence(input.sendAt, input.rule);
+    // Work out every recipient's time first, so a time that has passed somewhere creates nothing.
+    const timings = input.chatIds.map((chatId) => ({ chatId, ...timingFor(input, chatId) }));
     store.transaction(() => {
-      for (const chatId of input.chatIds) {
-        store.createScheduled({ ...input, chatId, attachment, sendAt, anchorAt: input.sendAt });
+      for (const { chatId, sendAt, rule } of timings) {
+        store.createScheduled({ ...input, chatId, attachment, rule, sendAt: firstOccurrence(sendAt, rule), anchorAt: sendAt });
       }
     });
     a.whatsapp.emitLocal({ type: 'scheduled-changed' });
@@ -439,12 +471,15 @@ export function registerIpc(ctx: IpcContext): void {
     else if (typeof input.attachmentPath === 'string' && input.attachmentPath !== previous?.attachment?.path) {
       attachment = await keepAttachment(input.attachmentPath, a.attachmentsDir);
     }
+    const chatId = input.chatIds[0]!;
+    const { sendAt, rule } = timingFor(input, chatId);
     store.updateScheduled(scheduleId, {
       ...input,
-      chatId: input.chatIds[0]!,
+      chatId,
       attachment,
-      sendAt: firstOccurrence(input.sendAt, input.rule),
-      anchorAt: input.sendAt,
+      rule,
+      sendAt: firstOccurrence(sendAt, rule),
+      anchorAt: sendAt,
     });
     const oldPath = previous?.attachment?.path;
     if (attachment !== undefined && oldPath && !store.isAttachmentUsed(oldPath)) await rm(oldPath, { force: true });

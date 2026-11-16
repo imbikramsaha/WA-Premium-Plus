@@ -62,6 +62,18 @@ export function formatDateTime(ms: number): string {
     : dateTimeWithYearFormat.format(date);
 }
 
+/** Like formatDateTime, in another time zone. */
+export function formatDateTimeIn(ms: number, timeZone: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone,
+  }).format(new Date(ms));
+}
+
 /** "in 2 hours", "tomorrow", "in 3 days", "5 minutes ago" */
 export function formatRelative(ms: number, now = Date.now()): string {
   const diff = ms - now;

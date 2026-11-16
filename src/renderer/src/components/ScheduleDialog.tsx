@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { describeGroupAction, EPHEMERAL_OPTIONS, GROUP_ACTION_TYPES, inverseGroupAction } from '../../../shared/group-actions';
 import { describeRule, firstOccurrence, nextOccurrence } from '../../../shared/schedule';
+import { formatWallTime, localZone, parseWallTime, sameZone, zoneCity, zoneForPhone } from '../../../shared/timezones';
 import type { AttachmentInfo, ChatSummary, GroupAction, Repeat, RepeatRule, ScheduleTarget } from '../../../shared/types';
-import { errorMessage, formatBytes, formatDateTime, formatTime, fromLocalInputValue, toLocalInputValue } from '../format';
+import { errorMessage, formatBytes, formatDateTime, formatDateTimeIn, formatTime, fromLocalInputValue, toLocalInputValue } from '../format';
 import { Avatar } from './Avatar';
 import { CloseIcon, FileIcon, PaperclipIcon, SearchIcon } from './Icons';
 
@@ -26,8 +27,22 @@ export interface ScheduleDraft {
 
 const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
-const dayMonth = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long' });
+const ALL_ZONES: string[] = (() => {
+  try {
+    return (Intl as unknown as { supportedValuesOf(key: string): string[] }).supportedValuesOf('timeZone');
+  } catch {
+    return [];
+  }
+})();
+
+/** 'mine' = this computer's zone; 'recipient' = each person's zone from their number; or an IANA zone. */
+type ZoneMode = 'mine' | 'recipient' | string;
+
+function zoneFor(mode: ZoneMode, chatId: string | undefined): string | undefined {
+  if (mode === 'mine') return undefined;
+  if (mode === 'recipient') return chatId ? zoneForPhone(chatId)?.zone : undefined;
+  return mode;
+}
 
 function roundUpToFiveMinutes(ms: number): number {
   const step = 5 * 60_000;
@@ -183,9 +198,11 @@ export function ScheduleDialog({
   const [picking, setPicking] = useState(draft.chatIds.length === 0);
   const [query, setQuery] = useState('');
   const [body, setBody] = useState(draft.body);
-  const [when, setWhen] = useState(() =>
-    toLocalInputValue(draft.sendAt ?? roundUpToFiveMinutes(Date.now() + 60 * 60_000)),
-  );
+  const [zoneMode, setZoneMode] = useState<ZoneMode>(draft.rule?.timeZone ?? 'mine');
+  const [when, setWhen] = useState(() => {
+    const at = draft.sendAt ?? roundUpToFiveMinutes(Date.now() + 60 * 60_000);
+    return draft.rule?.timeZone ? formatWallTime(at, draft.rule.timeZone) : toLocalInputValue(at);
+  });
   const [repeat, setRepeat] = useState<Repeat>(draft.rule?.repeat ?? 'none');
   const [interval, setIntervalValue] = useState(draft.rule?.interval ?? 1);
   const [unit, setUnit] = useState<'day' | 'week' | 'month'>(draft.rule?.unit ?? 'week');
@@ -205,18 +222,36 @@ export function ScheduleDialog({
   const isGroup = target === 'group';
   const inverse = inverseGroupAction(action);
 
-  const sendAt = fromLocalInputValue(when);
+  // Time zones apply to messages to people; statuses and group changes use this computer's time.
+  const effectiveMode: ZoneMode = target === 'chat' ? zoneMode : 'mine';
+  const zone = zoneFor(effectiveMode, chatIds[0]);
+  const sendAt = zone ? parseWallTime(when, zone) : fromLocalInputValue(when);
   const anchor = Number.isNaN(sendAt) ? Date.now() : sendAt;
   const anchorDate = new Date(anchor);
+  const zoneDate = zone ? new Date(parseWallTime(formatWallTime(anchor, zone).slice(0, 10) + 'T12:00', localZone())) : anchorDate;
+  const recipientZones = useMemo(() => {
+    const zones = new Map<string, { names: string[]; uncertain: boolean }>();
+    for (const id of chatIds) {
+      const guess = zoneForPhone(id);
+      // People in our own time zone don't need a choice.
+      if (!guess || sameZone(guess.zone, localZone())) continue;
+      const entry = zones.get(guess.zone) ?? { names: [], uncertain: false };
+      entry.names.push(chats.find((c) => c.id === id)?.name ?? id);
+      entry.uncertain ||= guess.uncertain;
+      zones.set(guess.zone, entry);
+    }
+    return zones;
+  }, [chatIds, chats]);
 
   // Default the custom weekly days to the chosen date's weekday.
   useEffect(() => {
-    if (repeat === 'custom' && unit === 'week' && weekdays.length === 0) setWeekdays([anchorDate.getDay()]);
+    if (repeat === 'custom' && unit === 'week' && weekdays.length === 0) setWeekdays([zoneDate.getDay()]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repeat, unit]);
 
   const rule: RepeatRule = useMemo(() => {
     const r: RepeatRule = { repeat };
+    if (zone) r.timeZone = zone;
     if (repeat === 'custom') {
       r.interval = Math.max(1, Math.floor(interval || 1));
       r.unit = unit;
@@ -227,7 +262,7 @@ export function ScheduleDialog({
       if (end !== undefined) r.endAt = end;
     }
     return r;
-  }, [repeat, interval, unit, weekdays, endDate]);
+  }, [repeat, interval, unit, weekdays, endDate, zone]);
 
   const preview = useMemo(() => {
     if (Number.isNaN(sendAt)) return [];
@@ -280,9 +315,9 @@ export function ScheduleDialog({
   }
 
   const presets = [
-    { label: 'In 1 hour', at: () => roundUpToFiveMinutes(Date.now() + 60 * 60_000) },
-    { label: `Tomorrow, ${formatTime(atHour(1, 9) / 1000)}`, at: () => atHour(1, 9) },
-    { label: `Monday, ${formatTime(nextMonday(9) / 1000)}`, at: () => nextMonday(9) },
+    { label: 'In 1 hour', at: () => roundUpToFiveMinutes(Date.now() + 60 * 60_000), relative: true },
+    { label: `Tomorrow, ${formatTime(atHour(1, 9) / 1000)}`, at: () => atHour(1, 9), relative: false },
+    { label: `Monday, ${formatTime(nextMonday(9) / 1000)}`, at: () => nextMonday(9), relative: false },
   ];
 
   useEffect(() => {
@@ -314,9 +349,14 @@ export function ScheduleDialog({
     setSaving(true);
     setError(null);
     try {
+      // With a time zone, the main process works out each recipient's send time from the wall time.
+      const zoned =
+        effectiveMode === 'mine'
+          ? {}
+          : { wallTime: when, timeZone: editing ? (zone ?? localZone()) : effectiveMode };
       const input = isGroup
         ? { target, chatIds, body: '', sendAt, rule, groupAction: action, revertAt }
-        : { target, chatIds: target === 'status' ? [] : chatIds, body: body.trim(), sendAt, rule, attachmentPath };
+        : { target, chatIds: target === 'status' ? [] : chatIds, body: body.trim(), sendAt, rule, attachmentPath, ...zoned };
       if (draft.id === undefined) await window.wapp.createScheduled(input);
       else await window.wapp.updateScheduled(draft.id, input);
       draft.onSaved?.();
@@ -331,9 +371,9 @@ export function ScheduleDialog({
     ['none', 'Does not repeat'],
     ['daily', 'Every day'],
     ['weekdays', 'Every weekday (Mon–Fri)'],
-    ['weekly', `Every week on ${weekday.format(anchorDate)}`],
-    ['monthly', `Every month on day ${anchorDate.getDate()}`],
-    ['yearly', `Every year on ${dayMonth.format(anchorDate)}`],
+    ['weekly', `Every week on ${new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(zoneDate)}`],
+    ['monthly', `Every month on day ${zoneDate.getDate()}`],
+    ['yearly', `Every year on ${new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long' }).format(zoneDate)}`],
     ['custom', 'Custom…'],
   ];
 
@@ -497,12 +537,59 @@ export function ScheduleDialog({
           <span className="field-label">When</span>
           <div className="presets">
             {presets.map((p) => (
-              <button key={p.label} type="button" className="chip" onClick={() => setWhen(toLocalInputValue(p.at()))}>
+              <button
+                key={p.label}
+                type="button"
+                className="chip"
+                onClick={() => setWhen(zone && p.relative ? formatWallTime(p.at(), zone) : toLocalInputValue(p.at()))}
+              >
                 {p.label}
               </button>
             ))}
           </div>
-          <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+          <div className="when-row">
+            <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+            {target === 'chat' && (
+              <select
+                value={zoneMode}
+                title="Time zone"
+                onChange={(e) => {
+                  const next = e.target.value;
+                  // Keep the same moment when switching zones.
+                  const nextZone = zoneFor(next, chatIds[0]);
+                  if (!Number.isNaN(sendAt)) setWhen(nextZone ? formatWallTime(sendAt, nextZone) : toLocalInputValue(sendAt));
+                  setZoneMode(next);
+                }}
+              >
+                <option value="mine">My time ({zoneCity(localZone())})</option>
+                {recipientZones.size > 0 && (
+                  <option value="recipient">
+                    {chatIds.length > 1 ? "Each recipient's time" : `Their time (${zoneCity([...recipientZones.keys()][0]!)})`}
+                  </option>
+                )}
+                <optgroup label="Other time zones">
+                  {ALL_ZONES.map((z) => (
+                    <option key={z} value={z}>
+                      {z.replaceAll('_', ' ')}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+            )}
+          </div>
+          {zone && !sameZone(zone, localZone()) && !Number.isNaN(sendAt) && (
+            <span className="hint">
+              {effectiveMode === 'recipient' && chatIds.length > 1
+                ? `Each person gets it at ${when.slice(11)} their time: ${[...recipientZones.entries()]
+                    .map(([z, e]) => `${zoneCity(z)}${e.uncertain ? ' (guessed from the country code; check)' : ''}`)
+                    .join(', ')}${chatIds.some((id) => !zoneForPhone(id)) ? ', and your time for the rest' : ''}.`
+                : `${formatDateTimeIn(sendAt, zone)} in ${zoneCity(zone)} is ${formatDateTime(sendAt)} your time.${
+                    effectiveMode === 'recipient' && [...recipientZones.values()][0]?.uncertain
+                      ? ' The zone is guessed from the country code; pick another if needed.'
+                      : ''
+                  }`}
+            </span>
+          )}
         </div>
 
         <div className="field">
@@ -592,7 +679,7 @@ export function ScheduleDialog({
             </strong>
             <span className="muted">
               {preview.length === 1 ? (isGroup ? 'Changes ' : 'Sends ') : isGroup ? 'Next changes: ' : 'Next sends: '}
-              {preview.map((t) => formatDateTime(t)).join(' · ')}
+              {preview.map((t) => (zone ? `${formatDateTimeIn(t, zone)} (${zoneCity(zone)})` : formatDateTime(t))).join(' · ')}
               {rule.repeat !== 'none' && preview.length === 4 ? ' …' : ''}
             </span>
             {revertPreview.length > 0 && inverse && (

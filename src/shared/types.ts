@@ -265,6 +265,11 @@ export interface RepeatRule {
   weekdays?: number[];
   /** Stop repeating after this time (Unix ms). */
   endAt?: number;
+  /**
+   * IANA time zone whose wall clock the times follow (for example the recipient's).
+   * Unset: the computer's own time zone.
+   */
+  timeZone?: string;
 }
 
 export type AttachmentKind = 'image' | 'video' | 'audio' | 'document';
@@ -291,6 +296,8 @@ export interface ScheduledMessage {
   sendAt: number;
   rule: RepeatRule;
   status: ScheduleStatus;
+  /** The time repeats are counted from (Unix ms). */
+  anchorAt: number;
   attachment?: AttachmentInfo;
   /** For target 'group': the settings change to apply. */
   groupAction?: GroupAction;
@@ -314,6 +321,12 @@ export interface ScheduleInput {
   attachmentPath?: string | null;
   /** For target 'group': the settings change to apply. */
   groupAction?: GroupAction;
+  /**
+   * Send at a wall-clock time ("2026-11-20T09:00") in a time zone instead of at `sendAt`:
+   * an IANA zone, or 'recipient' for each person's zone guessed from their number.
+   */
+  wallTime?: string;
+  timeZone?: string;
   /**
    * For on/off group settings: also schedule the opposite change at this time (Unix ms),
    * with the same repeat rule. For example, lock at 22:00 and open again at 07:00.

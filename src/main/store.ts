@@ -1219,6 +1219,7 @@ export class Store {
       chatName: r.target === 'status' ? 'My status' : r.chat_name || fallbackName(r.chat_id),
       body: r.body,
       sendAt: r.send_at,
+      anchorAt: r.anchor_at,
       rule: parseRule(r),
       status: r.status,
       attachment: rowAttachment(r),

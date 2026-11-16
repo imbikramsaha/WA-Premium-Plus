@@ -181,7 +181,7 @@ export function MainScreen({ connection, extras }: { connection: ConnectionState
           {view === 'scheduled' ? (
             <ScheduledList
               items={scheduled}
-              onNew={() => setDraft({ chatIds: [], body: '' })}
+              onNew={(sendAt) => setDraft({ chatIds: [], body: '', sendAt })}
               onEdit={(item) =>
                 setDraft({
                   id: item.id,
