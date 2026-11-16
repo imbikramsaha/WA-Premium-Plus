@@ -9,6 +9,8 @@ Free, open-source WhatsApp desktop app with scheduling and automation. Unofficia
 - **Insights** and **exports** of chats and group members.
 - **Updates itself** from GitHub Releases, verified against SHA256SUMS.
 
+**0.5.1** polishes alignment, spacing, edges and sizes on every screen, keeps pages and the message column at a comfortable width on large and full-screen windows, and fixes small-window overflow.
+
 Versions before 0.5 don't update themselves: install this one with a command below, and later versions arrive automatically.
 
 ## Install
