@@ -73,10 +73,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Versions like v0.6.0-beta.1 are pre-releases: not "latest", so download links,
+          # install commands and auto-update keep using the latest full release.
+          prerelease=""
+          case "${{ github.ref_name }}" in *-*) prerelease="--prerelease" ;; esac
           gh release create "${{ github.ref_name }}" installers/* \
             --repo "${{ github.repository }}" \
             --title "WA Premium Plus ${{ github.ref_name }}" \
-            --notes-file .github/release-notes.md
+            --notes-file .github/release-notes.md $prerelease
 
   test-install:
     name: Test install (${{ matrix.os }})

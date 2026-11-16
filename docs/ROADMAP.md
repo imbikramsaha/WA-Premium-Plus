@@ -13,39 +13,40 @@
 - [x] Text conversations with delivery and read ticks
 - [x] Desktop notifications
 - [x] Load older messages
-- [ ] Link by phone number (pairing code) as well as QR
-- [ ] Profile pictures
+- [x] Link by phone number (pairing code) as well as QR
+- [x] Profile pictures
 - [x] Media: view and send images, video, documents, voice notes, stickers
 - [x] Show edited and deleted messages
-- [ ] Replies, reactions, forwards
-- [ ] Polls, locations and contact cards
+- [x] Replies, reactions, forwards
+- [x] Polls, locations and contact cards
 - [x] Groups: sender names, member list, admins, invite link
-- [ ] Group admin tools (add/remove members, edit info)
-- [ ] Status: view and post
-- [ ] Channels
-- [ ] Archive, pin, mute, labels
+- [x] Group admin tools (add/remove members, edit info)
+- [x] Status: view and post
+- [x] Channels
+- [x] Archive, pin, mute, labels
 - [x] Voice and video calls through the official WhatsApp Web window
-- [ ] Call log
-- [ ] Multiple WhatsApp numbers
+- [x] Call log
+- [x] Multiple WhatsApp numbers
 
 ## Scheduling
 - [x] Scheduled messages: one-off and repeating (daily, weekly, monthly)
 - [x] Edit, cancel, send now; missed and failed handling
+- [x] Edit and delete sent messages
 - [x] Schedule photos, videos and documents
 - [x] Custom repeat rules (weekdays, every N days/weeks/months, chosen weekdays, yearly, end date)
-- [ ] Send in the recipient's time zone
+- [x] Send in the recipient's time zone
 - [x] Scheduled status posts
-- [ ] Content calendar view
+- [x] Content calendar view
 - [x] Send one scheduled message to several chats
 - [x] Scheduled group settings changes, with automatic switch-back for on/off settings
 
 ## Automation
-- [ ] Quick replies with `/shortcut`
-- [ ] Rules (when X happens, if Y, do Z): keyword auto-replies, away messages, welcome messages
-- [ ] Auto-reject calls with a reply message
-- [ ] Follow-up reminders ("remind me if no reply in 2 days")
-- [ ] Contact lists from CSV and personalized broadcasts, with safety limits (daily caps, random delays, opt-out)
-- [ ] Outbound webhooks (n8n, Zapier, CRMs)
+- [x] Quick replies with `/shortcut`
+- [x] Rules (when X happens, if Y, do Z): keyword auto-replies, away messages, welcome messages
+- [x] Auto-reject calls with a reply message
+- [x] Follow-up reminders ("remind me if no reply in 2 days")
+- [x] Contact lists from CSV and personalized broadcasts, with safety limits (daily caps, random delays, opt-out)
+- [x] Outbound webhooks (n8n, Zapier, CRMs)
 
 ## AI (optional, bring your own key)
 - [ ] Suggested replies you approve
@@ -53,10 +54,10 @@
 - [ ] Voice-note transcription and translation
 
 ## Data
-- [ ] Export chats
-- [ ] Export group members to CSV
-- [ ] Message search across all chats
-- [ ] Analytics: message volume and response times
+- [x] Export chats
+- [x] Export group members to CSV
+- [x] Message search across all chats (full-text, any language)
+- [x] Analytics: message volume and response times
 
 ## Distribution
 - [x] Installers published to GitHub Releases (macOS DMG, Windows installer, Linux AppImage)
@@ -64,4 +65,4 @@
 - [ ] Signed Windows installer
 - [x] Linux .deb in addition to AppImage (x64 and ARM64)
 - [x] One-line install commands for macOS, Linux and Windows, verified against SHA256SUMS
-- [ ] Auto-update
+- [x] Auto-update from GitHub Releases, verified against SHA256SUMS (macOS, Windows, Linux AppImage; .deb shows the update command)

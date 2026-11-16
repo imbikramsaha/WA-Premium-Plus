@@ -1,4 +1,15 @@
-Free, open-source WhatsApp desktop app with scheduling. Unofficial; not affiliated with WhatsApp or Meta.
+Free, open-source WhatsApp desktop app with scheduling and automation. Unofficial; not affiliated with WhatsApp or Meta.
+
+## What's new in 0.5
+
+- **Chat like on your phone**: replies, reactions, forwards, edits and deletes; polls, locations and contact cards; profile pictures; archive, pin, mute and labels; status updates; channels; group admin tools; call log; link by phone number; several WhatsApp numbers in one app.
+- **Search every message** in every chat and jump to it.
+- **Scheduling** in the recipient's time zone, and a content calendar.
+- **Automation**: quick replies (`/`), rules for keyword replies, away and welcome messages, declining calls with a message, follow-up reminders, CSV contact lists and broadcasts with safety limits and opt-outs, and webhooks.
+- **Insights** and **exports** of chats and group members.
+- **Updates itself** from GitHub Releases, verified against SHA256SUMS.
+
+Versions before 0.5 don't update themselves: install this one with a command below, and later versions arrive automatically.
 
 ## Install
 

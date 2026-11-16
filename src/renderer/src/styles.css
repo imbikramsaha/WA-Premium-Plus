@@ -4367,3 +4367,10 @@ a.button {
   background: var(--citrus);
   box-shadow: 0 0 0 2px var(--bg);
 }
+
+/* Reactions and poll options stay readable while they can't be used (offline). */
+.reaction:disabled,
+.poll-option:disabled {
+  opacity: 1;
+  cursor: default;
+}

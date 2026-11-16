@@ -6,8 +6,8 @@
 
 **WhatsApp on your desktop, with superpowers.**
 
-Schedule messages, statuses and group settings, send to many chats at once,<br>
-and chat with your full history: photos, voice notes and documents included. Free and open source.
+Schedule messages in anyone's time zone, automate replies, run safe broadcasts,<br>
+search every chat and see your insights, with your full history on your computer. Free and open source.
 
 [![CI](https://github.com/imbikramsaha/WA-Premium-Plus/actions/workflows/ci.yml/badge.svg)](https://github.com/imbikramsaha/WA-Premium-Plus/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/imbikramsaha/WA-Premium-Plus?label=release&color=b8b55a)](https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest)
@@ -82,36 +82,62 @@ The install commands check every download against the release's `SHA256SUMS`.
 ## What you can do
 
 ### Chat like on your phone
-- **All your chats** with unread counts, search, and **All / Unread / Groups** filters.
-- **Send and receive messages** with delivery and read ticks; edited and deleted messages are marked as such.
-- **Photos, videos, stickers, voice notes and documents**: view photos full size, play voice notes and videos, open or save documents.
-- **Send photos, videos and documents** by attaching, dragging them in or pasting, with a caption.
-- **Record and send voice notes.**
-- **Your history, including media**: older photos and files are fetched from your phone when you open a chat, and expired files are requested again.
-- **Groups** show who said what, with a group info panel listing members, admins and the group's settings.
-- **Desktop notifications** for new messages.
+- **All your chats** with unread counts, **pinned** chats on top, **archived** chats tucked away, **muted** chats kept quiet, and **All / Unread / Groups / Channels** filters. Pin, archive, mute and mark as unread sync with your phone.
+- **Labels** of your own (Clients, Family, To follow up…) to sort and filter chats; WhatsApp Business labels sync in too.
+- **Profile pictures** for people, groups and channels.
+- **Reply, react, forward, edit and delete** messages, with delivery and read ticks, *bold*, _italic_ and clickable links.
+- **Photos, videos, stickers, voice notes and documents**: view, play, open or save them; send them by attaching, dragging in or pasting; record voice notes.
+- **Polls** (create, vote, see who voted), **locations** and **contact cards**.
+- **Search every message** in every chat, in any language, and jump straight to the result.
+- **Status**: see your contacts' updates and post your own text, photo or video.
+- **Channels**: follow by link, read updates, mute or unfollow.
+- **Groups**: who said what, members and admins, change settings and the name or description, add, remove, promote and dismiss members, reset the invite link, create and leave groups.
+- **Call log** of calls received while the app runs and calls from your chat history.
+- **Link by QR code or by phone number** (pairing code).
+- **Several WhatsApp numbers** in one app, each with its own chats, schedules and automation, all connected at once.
+
+<p align="center">
+  <img src="docs/screenshots/calendar-light.png" alt="The content calendar: a month of scheduled messages, statuses and group changes" width="760">
+</p>
 
 ### Schedule anything
 - **Messages**: write now, send later. To one chat or **many chats at once** (each gets its own copy), with an optional **photo, video or document**.
+- **In the recipient's time zone**: "9:00 their time" is worked out from their phone number (or pick any time zone); with several recipients, each gets it at 9:00 *their* time. Repeats follow their clock through daylight-saving changes.
 - **Status updates**: post text, a photo or a video to your status at a set time.
-- **Group settings** (for groups you admin): who can send messages, who can edit info or add members, approval for new members, disappearing messages, the group name and description, and resetting the invite link.
+- **Group settings** (for groups you admin): who can send messages, who can edit info or add members, approval for new members, disappearing messages, the group name and description, and resetting the invite link, with **automatic switch-back** (for example *only admins can send* every night from 22:00 to 07:00).
 - **Repeats**: every day, every weekday, weekly, monthly, yearly, or custom (every *N* days, weeks or months on the days you pick), with an optional end date.
-- **Switch back automatically** for on/off group settings. For example, *only admins can send messages* every night from 22:00 to 07:00, set up in one step.
-- **See before you save**: the next few send times are shown as you set things up.
-- **Stay in control**: edit, cancel, delete or **Send now**. If the computer was off at the scheduled time, the message is marked *Missed* instead of going out hours late. Network hiccups are retried; problems that can't fix themselves (for example, no longer being a group admin) are reported with the reason.
+- **Content calendar**: every upcoming send on a month grid, repeats included. Drag a one-off message to another day to move it; double-click a day to schedule on it.
+- **Stay in control**: edit, cancel, delete or **Send now**. If the computer was off at the scheduled time, the message is marked *Missed* instead of going out hours late; problems that can't fix themselves (such as no longer being a group admin) are reported with the reason.
 
-### Calls
-- **Voice and video calls** open the official WhatsApp Web in its own window, straight into the person's chat.
-
-### Built for your desktop
-- **Keeps running in the tray** when you close the window, so scheduled items still go out. Optional **Open at login** on macOS and Windows.
-- **One app, one connection**: opening it twice brings back the window you already have instead of starting a second copy.
-- **Light and dark themes** in Citrus, the yellow of Apple's MacBook Neo, with a native title bar on macOS.
-- **Everything stays on your computer**: no accounts, no servers, no tracking.
+### Automate the routine
+- **Quick replies**: type `/` in the message box to insert saved replies like `/thanks` or `/address`, with the person's name filled in.
+- **Rules**: *when* a message arrives (from anyone, saved contacts, unknown numbers or chosen chats), *if* it mentions certain words or arrives outside business hours, *then* reply, add a label, mark it read or notify you. Ready-made **keyword replies**, **away messages**, **welcome messages** for new contacts and **welcome messages for people joining a group**.
+- **Decline calls automatically** and send a message instead, for everyone or only unknown numbers, at any time or outside your hours.
+- **Follow-up reminders**: "remind me if they haven't replied by Friday", or have the follow-up message sent for you. Settled automatically when they reply.
+- **Broadcasts**: import contacts from a **CSV** file (or pick chats, or a group's members) and send each person a personalised message with `{first_name}`, any column from the file, and `{Hi|Hello}` variations.
+- **Safety limits built in**: a daily cap, random pauses between messages, sending hours, a WhatsApp check on every number, an hourly limit on automatic replies, and **opt-outs**: anyone who replies STOP is never messaged again.
+- **Webhooks** for n8n, Zapier, Make or your own server: new messages, calls, scheduled sends, broadcasts, opt-outs and reminders, as signed JSON.
 
 <p align="center">
-  <img src="docs/screenshots/scheduled-light.png" alt="The Scheduled screen with upcoming and sent messages" width="760">
+  <img src="docs/screenshots/automation-light.png" alt="Automation rules: an away message and a keyword reply" width="760">
 </p>
+
+### Understand your chats
+- **Insights**: messages sent and received per day, your busiest days and hours, your most active chats, and how quickly you and others reply. Every chart has a table view.
+- **Export** a chat, or all of them, as text (like WhatsApp's own export), a web page, CSV or JSON, with the photos and files already on your computer.
+- **Export a group's members** as a CSV file.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/insights-dark.png">
+  <img src="docs/screenshots/insights-light.png" alt="Insights: messages per day, reply times and busiest hours" width="900">
+</picture>
+
+### Built for your desktop
+- **Updates itself**: new versions download in the background from GitHub Releases, are checked against their published SHA-256 checksums, and install when you restart. (Linux .deb installs show the one-line update command.)
+- **Keeps running in the tray** when you close the window, so scheduled messages, rules and broadcasts still run. Optional **Open at login** on macOS and Windows.
+- **One app, one connection**: opening it twice brings back the window you already have.
+- **Light and dark themes** in Citrus, the yellow of Apple's MacBook Neo, with a native title bar on macOS.
+- **Everything stays on your computer**: no accounts, no servers, no tracking.
 
 ## How it works
 
@@ -136,10 +162,10 @@ WA Premium Plus links to your account as a **linked device**, the same way Whats
 
 | | |
 |---|---|
-| **Your data** | Chats, media and scheduled items live only on your computer. There are no WA Premium Plus servers, accounts or analytics. |
+| **Your data** | Chats, media and scheduled items live only on your computer. There are no WA Premium Plus servers, accounts or analytics. Webhooks send events only to the addresses you add, and update checks only ask GitHub for the latest version. |
 | **Your WhatsApp** | The app connects as a linked device; you can remove it any time from **Linked devices** on your phone, or with **Log out** in the app. |
 | **Respectful by design** | No tricks that break other people's privacy: no keeping messages the sender deleted, no saving view-once media. |
-| **Use it responsibly** | This is an unofficial client. Normal use is fine, but sending large volumes of messages, especially to people who haven't messaged you, can get a number banned by WhatsApp. |
+| **Use it responsibly** | This is an unofficial client. Normal use is fine, but sending large volumes of messages, especially to people who haven't messaged you, can get a number banned by WhatsApp. Broadcasts and auto-replies have safety limits on by default; keep them. |
 
 ## Platform support
 
@@ -183,6 +209,24 @@ Only for groups where you're an admin; WhatsApp doesn't let other members change
 </details>
 
 <details>
+<summary><b>Are broadcasts safe for my number?</b></summary>
+<br>
+Broadcasts go out one at a time with random pauses, within the hours and the daily limit you set, only to numbers that are on WhatsApp, and never to people who opted out. That keeps them close to how a person sends messages. Still, WhatsApp may ban numbers that message many people who don't know them, so only message people who expect to hear from you, and keep the opt-out line in.
+</details>
+
+<details>
+<summary><b>How do updates work without a code-signing certificate?</b></summary>
+<br>
+The app asks GitHub for the latest release a few times a day, downloads the installer for your computer, and checks it against the release's <code>SHA256SUMS</code> before installing it when you restart. On macOS the new app replaces the old one in place; on Windows the installer runs silently; AppImages replace themselves. If you installed the Linux .deb, it shows the one-line command to update instead. You can turn automatic checks off in Settings.
+</details>
+
+<details>
+<summary><b>Can I use two WhatsApp numbers?</b></summary>
+<br>
+Yes. Click your picture at the bottom left and choose <b>Add WhatsApp account</b>. Every account stays connected in the background with its own chats, schedules, rules and broadcasts; notifications say which account they're for.
+</details>
+
+<details>
 <summary><b>Where is my data stored, and how do I uninstall?</b></summary>
 <br>
 
@@ -195,11 +239,13 @@ Choose **Log out** in the app first to unlink it from your phone and delete its 
 
 ## Roadmap
 
-- [x] **Chats, media, groups and calls** on macOS, Windows and Linux
-- [x] **Scheduling** for messages, statuses and group settings, with repeats
-- [ ] **Quick replies and automation rules** (keyword replies, away messages)
-- [ ] **Multiple WhatsApp numbers** in one app
-- [ ] **Code-signed builds and auto-update**
+- [x] **Chats, media, groups, status, channels and calls** on macOS, Windows and Linux
+- [x] **Scheduling** for messages, statuses and group settings, in anyone's time zone, with a calendar
+- [x] **Automation**: quick replies, rules, call auto-reject, follow-ups, broadcasts with safety limits, webhooks
+- [x] **Data**: search everything, export chats and members, insights
+- [x] **Multiple WhatsApp numbers** and **auto-update**
+- [ ] **AI helpers** (bring your own key): suggested replies, summaries, voice-note transcription
+- [ ] **Code-signed builds** (needs paid Apple and Microsoft certificates)
 
 See the full [roadmap](docs/ROADMAP.md).
 
