@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, it } from 'node:test';
 import { Store } from '../src/main/store.ts';
@@ -12,7 +14,7 @@ function message(chatId: string, id: string, timestamp: number, extra: Record<st
 
 describe('Store', () => {
   it('upgrades a version 1 database in place, keeping its data', () => {
-    const file = `${process.env.TMPDIR ?? '/tmp'}/wapp-test-${process.pid}-${Date.now()}.db`;
+    const file = join(tmpdir(), `wapp-test-${process.pid}-${Date.now()}.db`);
     const old = new DatabaseSync(file);
     old.exec(`
       CREATE TABLE chats (id TEXT PRIMARY KEY, name TEXT, unread_count INTEGER NOT NULL DEFAULT 0, last_activity INTEGER NOT NULL DEFAULT 0);
