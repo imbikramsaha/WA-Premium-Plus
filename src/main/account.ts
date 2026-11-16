@@ -1,6 +1,7 @@
 // One linked WhatsApp number: its connection, database, scheduler and automation.
 // The app can run several accounts side by side; each keeps its data in its own folder.
 
+import { mkdirSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AppEvent, ChatMessage } from '../shared/types';
@@ -49,6 +50,7 @@ export class Account {
     this.attachmentsDir = join(dir, 'attachments');
     this.avatarsDir = join(dir, 'avatars');
     this.authDir = join(dir, 'auth');
+    mkdirSync(dir, { recursive: true });
     this.store = new Store(join(dir, 'wapp.db'));
     this.store.mediaUrl = (fileName) => `wapp-media://${id}/media/${encodeURIComponent(fileName)}`;
 

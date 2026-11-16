@@ -230,7 +230,7 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
     this.handleMessages([sent], 'append');
     if (localCopy && sent.key.id) {
       // Keep a copy of what we sent so it shows without downloading it again.
-      const parsed = parseMessage(sent, this.resolveJid);
+      const parsed = parseMessage(sent, this.resolveJid, this.isMe);
       if (parsed?.type === 'message') {
         const { message } = parsed;
         const name = mediaFileName(message.chatId, message.id, message.media?.mimetype, message.media?.fileName);
@@ -1255,6 +1255,15 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
     return this.opts.store.pnForLid(normalized) ?? normalized;
   };
 
+  /** Whether an ID is the linked account (by phone number or privacy ID). */
+  private readonly isMe = (jid: string): boolean => {
+    const id = jidNormalizedUser(jid);
+    if (!id) return false;
+    if (id === this.state.me?.id) return true;
+    const lid = this.sock?.user?.lid;
+    return Boolean(lid && id === jidNormalizedUser(lid));
+  };
+
   /** Emits a stored message to the window (without the raw payload). */
   private emitStored(message: ChatMessage | undefined): void {
     if (!message) return;
@@ -1268,7 +1277,7 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
    */
   private applyMessage(raw: WAMessage, emit: boolean): ChatMessage | undefined {
     const { store } = this.opts;
-    const parsed = parseMessage(raw, this.resolveJid);
+    const parsed = parseMessage(raw, this.resolveJid, this.isMe);
     if (!parsed) return undefined;
     if (parsed.type === 'edit') {
       const edited = store.editMessage(parsed.chatId, parsed.targetId, parsed.body);
