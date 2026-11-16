@@ -211,10 +211,10 @@ export function SettingsView({ onExportAll }: { onExportAll?: () => void }) {
             WhatsApp or Meta.
           </p>
           <div className="row-buttons left">
-            <a className="button ghost" href={REPO_URL} target="_blank" rel="noreferrer">
+            <a className="button" href={REPO_URL} target="_blank" rel="noreferrer">
               Source code on GitHub
             </a>
-            <a className="button ghost" href={`${REPO_URL}/issues`} target="_blank" rel="noreferrer">
+            <a className="button" href={`${REPO_URL}/issues`} target="_blank" rel="noreferrer">
               Report a problem
             </a>
           </div>

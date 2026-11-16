@@ -290,13 +290,71 @@ function CampaignsTab({ lists, connected }: { lists: ContactList[]; connected: b
             const done = c.counts.sent + c.counts.failed + c.counts.skipped;
             const progress = c.counts.total ? (done / c.counts.total) * 100 : 0;
             return (
-              <li key={c.id} className="card-row campaign">
-                <div className="card-main">
-                  <div className="scheduled-top">
+              <li key={c.id} className="card-row campaign-card">
+                  <div className="campaign-top">
                     <strong>{c.name}</strong>
                     <span className={`status status-${c.status === 'running' ? 'pending' : c.status === 'done' ? 'sent' : c.status === 'cancelled' ? 'cancelled' : 'missed'}`}>
                       {STATUS_LABELS[c.status]}
                     </span>
+                  <div className="row-buttons">
+                    {(c.status === 'draft' || c.status === 'paused') && (
+                      <button className="button primary small" onClick={() => void attempt(() => window.wapp.startCampaign(c.id))}>
+                        {c.status === 'draft' ? 'Start' : 'Resume'}
+                      </button>
+                    )}
+                    {c.status === 'running' && (
+                      <button className="button small" onClick={() => void attempt(() => window.wapp.pauseCampaign(c.id))}>
+                        Pause
+                      </button>
+                    )}
+                    {(c.status === 'draft' || c.status === 'paused') && (
+                      <button
+                        className="button small"
+                        onClick={() =>
+                          setEditing({
+                            id: c.id,
+                            attachment: c.attachment?.name,
+                            input: {
+                              name: c.name,
+                              listId: c.listId,
+                              body: c.body,
+                              startAt: c.startAt,
+                              dailyCap: c.dailyCap,
+                              minDelay: c.minDelay,
+                              maxDelay: c.maxDelay,
+                              optOutFooter: c.optOutFooter,
+                              sendFrom: c.sendFrom,
+                              sendUntil: c.sendUntil,
+                            },
+                          })
+                        }
+                      >
+                        Edit
+                      </button>
+                    )}
+                    {c.status !== 'draft' && (
+                      <button className="button small" onClick={() => setViewing(c)}>
+                        Details
+                      </button>
+                    )}
+                    {(c.status === 'running' || c.status === 'paused') && (
+                      <button
+                        className="button small"
+                        onClick={() => window.confirm(`Stop "${c.name}" for good?`) && void attempt(() => window.wapp.cancelCampaign(c.id))}
+                      >
+                        Stop
+                      </button>
+                    )}
+                    {c.status !== 'running' && (
+                      <button
+                        className="icon-button tiny"
+                        title="Delete"
+                        onClick={() => window.confirm(`Delete "${c.name}"?`) && void attempt(() => window.wapp.deleteCampaign(c.id))}
+                      >
+                        <TrashIcon size={15} />
+                      </button>
+                    )}
+                  </div>
                   </div>
                   <span className="muted small">
                     To {c.listName} · {c.counts.total} people · {c.dailyCap}/day · {c.minDelay}–{c.maxDelay}s apart · {c.sendFrom}–{c.sendUntil}
@@ -309,71 +367,17 @@ function CampaignsTab({ lists, connected }: { lists: ContactList[]; connected: b
                       </div>
                       <span className="muted small">
                         {c.counts.sent} sent · {c.counts.failed} failed · {c.counts.skipped} skipped · {c.counts.pending} waiting
-                        {c.status === 'running' && c.nextAt ? ` · next ${formatRelative(c.nextAt)}` : ''}
+                        {c.status === 'running' && c.nextAt
+                          ? c.nextAt > Date.now()
+                            ? ` · next ${formatRelative(c.nextAt)}`
+                            : connected
+                              ? ' · sending the next one now'
+                              : ' · continues when WhatsApp is connected'
+                          : ''}
                         {c.lastError && c.status === 'running' ? ` · ${c.lastError}` : ''}
                       </span>
                     </>
                   )}
-                </div>
-                <div className="row-buttons">
-                  {(c.status === 'draft' || c.status === 'paused') && (
-                    <button className="button primary small" onClick={() => void attempt(() => window.wapp.startCampaign(c.id))}>
-                      {c.status === 'draft' ? 'Start' : 'Resume'}
-                    </button>
-                  )}
-                  {c.status === 'running' && (
-                    <button className="button small" onClick={() => void attempt(() => window.wapp.pauseCampaign(c.id))}>
-                      Pause
-                    </button>
-                  )}
-                  {(c.status === 'draft' || c.status === 'paused') && (
-                    <button
-                      className="button small"
-                      onClick={() =>
-                        setEditing({
-                          id: c.id,
-                          attachment: c.attachment?.name,
-                          input: {
-                            name: c.name,
-                            listId: c.listId,
-                            body: c.body,
-                            startAt: c.startAt,
-                            dailyCap: c.dailyCap,
-                            minDelay: c.minDelay,
-                            maxDelay: c.maxDelay,
-                            optOutFooter: c.optOutFooter,
-                            sendFrom: c.sendFrom,
-                            sendUntil: c.sendUntil,
-                          },
-                        })
-                      }
-                    >
-                      Edit
-                    </button>
-                  )}
-                  {c.status !== 'draft' && (
-                    <button className="button small" onClick={() => setViewing(c)}>
-                      Details
-                    </button>
-                  )}
-                  {(c.status === 'running' || c.status === 'paused') && (
-                    <button
-                      className="button small"
-                      onClick={() => window.confirm(`Stop "${c.name}" for good?`) && void attempt(() => window.wapp.cancelCampaign(c.id))}
-                    >
-                      Stop
-                    </button>
-                  )}
-                  {c.status !== 'running' && (
-                    <button
-                      className="icon-button tiny"
-                      title="Delete"
-                      onClick={() => window.confirm(`Delete "${c.name}"?`) && void attempt(() => window.wapp.deleteCampaign(c.id))}
-                    >
-                      <TrashIcon size={15} />
-                    </button>
-                  )}
-                </div>
               </li>
             );
           })}

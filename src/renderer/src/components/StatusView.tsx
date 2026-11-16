@@ -133,7 +133,7 @@ function Viewer({
       </div>
       <header className="status-header">
         <Avatar id={person.id} name={person.name} size={36} />
-        <div>
+        <div className="status-who">
           <strong>{person.name}</strong>
           <span>{formatChatTime(message.timestamp)}</span>
         </div>
@@ -250,7 +250,7 @@ export function StatusView({ connection }: { connection: ConnectionState }) {
           <li>
             <button className="chat-row" onClick={() => (mine.length ? openPerson(myPerson) : setPosting(true))}>
               <div className={`status-ring${mine.length ? ' mine' : ' empty'}`}>
-                <Avatar id={myPerson.id} name={meName} />
+                <Avatar id={myPerson.id} name={meName} size={40} />
               </div>
               <div className="chat-row-main">
                 <span className="chat-name">My status</span>
@@ -265,7 +265,7 @@ export function StatusView({ connection }: { connection: ConnectionState }) {
             <li key={p.id}>
               <button className={`chat-row${open?.id === p.id ? ' selected' : ''}`} onClick={() => openPerson(p)}>
                 <div className="status-ring">
-                  <Avatar id={p.id} name={p.name} />
+                  <Avatar id={p.id} name={p.name} size={40} />
                 </div>
                 <div className="chat-row-main">
                   <span className="chat-name">{p.name}</span>
@@ -279,7 +279,7 @@ export function StatusView({ connection }: { connection: ConnectionState }) {
             <li key={p.id}>
               <button className={`chat-row${open?.id === p.id ? ' selected' : ''}`} onClick={() => openPerson(p)}>
                 <div className="status-ring seen">
-                  <Avatar id={p.id} name={p.name} />
+                  <Avatar id={p.id} name={p.name} size={40} />
                 </div>
                 <div className="chat-row-main">
                   <span className="chat-name">{p.name}</span>

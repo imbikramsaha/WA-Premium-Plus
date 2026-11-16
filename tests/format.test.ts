@@ -18,3 +18,13 @@ describe('formatRelative', () => {
     assert.equal(formatRelative(mondayEvening + 10_000, mondayEvening), 'in less than a minute');
   });
 });
+
+import { plainText } from '../src/renderer/src/format.ts';
+
+describe('plainText', () => {
+  it('drops WhatsApp formatting markers in previews, but not stray symbols', () => {
+    assert.equal(plainText('Bring the *final* deck.'), 'Bring the final deck.');
+    assert.equal(plainText('_hi_ ~old~ ```code```'), 'hi old code');
+    assert.equal(plainText('a*b*c and 5 * 3 * 2'), 'a*b*c and 5 * 3 * 2');
+  });
+});

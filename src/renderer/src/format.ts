@@ -107,7 +107,15 @@ export function kindLabel(kind: MessageKind): string {
   return KIND_LABELS[kind];
 }
 
-export function messagePreview({ kind, body }: { kind: MessageKind; body: string }): string {
+/** Text without WhatsApp's formatting markers (*bold*, _italic_, ~strike~, ```code```), for previews. */
+export function plainText(text: string): string {
+  return text
+    .replace(/```([\s\S]+?)```/g, '$1')
+    .replace(/(^|[\s(])([*_~])(\S(?:[^\n]*?\S)?)\2(?=[\s).,!?:;]|$)/g, '$1$3');
+}
+
+export function messagePreview({ kind, body: raw }: { kind: MessageKind; body: string }): string {
+  const body = plainText(raw);
   if (kind === 'text' || kind === 'call' || (kind === 'other' && body)) return body;
   if (kind === 'deleted') return kindLabel(kind);
   return body ? `${kindLabel(kind)}: ${body}` : kindLabel(kind);

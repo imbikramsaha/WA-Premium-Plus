@@ -379,7 +379,7 @@ export function ScheduleDialog({
 
   return (
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <form className="dialog" onSubmit={submit} aria-labelledby="schedule-title">
+      <form className="dialog modal" onSubmit={submit} aria-labelledby="schedule-title">
         <header className="dialog-header">
           <h2 id="schedule-title">
             {isGroup ? (editing ? 'Edit group change' : 'Schedule a group change') : editing ? 'Edit scheduled message' : 'Schedule a message'}
@@ -388,6 +388,7 @@ export function ScheduleDialog({
             <CloseIcon />
           </button>
         </header>
+        <div className="dialog-body">
 
         {!(editing && isGroup) && (
           <div className="segmented" role="tablist">
@@ -697,6 +698,7 @@ export function ScheduleDialog({
         </p>
 
         {error && <p className="error">{error}</p>}
+        </div>
 
         <footer className="dialog-footer">
           <button type="button" className="button" onClick={onClose}>

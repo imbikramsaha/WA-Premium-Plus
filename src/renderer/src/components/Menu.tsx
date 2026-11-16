@@ -21,11 +21,14 @@ export function Menu({
   items,
   x,
   y,
+  alignRight,
   onClose,
 }: {
   items: MenuItem[];
+  /** Left edge; with alignRight, the right edge. */
   x: number;
   y: number;
+  alignRight?: boolean;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -37,11 +40,12 @@ export function Menu({
     const el = ref.current;
     if (!el) return;
     const { width, height } = el.getBoundingClientRect();
+    const left = alignRight ? x - width : x;
     setPos({
-      left: Math.max(8, Math.min(x, window.innerWidth - width - 8)),
+      left: Math.max(8, Math.min(left, window.innerWidth - width - 8)),
       top: Math.max(8, Math.min(y, window.innerHeight - height - 8)),
     });
-  }, [x, y]);
+  }, [x, y, alignRight]);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -109,7 +113,7 @@ export function Menu({
 
 /** State helper: open a menu at the mouse, or under a button. */
 export function useMenu() {
-  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[]; alignRight?: boolean } | null>(null);
   return {
     menu,
     close: () => setMenu(null),
@@ -119,7 +123,7 @@ export function useMenu() {
     },
     openUnder: (el: HTMLElement, items: MenuItem[], align: 'left' | 'right' = 'right') => {
       const r = el.getBoundingClientRect();
-      setMenu({ x: align === 'right' ? r.right - 220 : r.left, y: r.bottom + 4, items });
+      setMenu({ x: align === 'right' ? r.right : r.left, y: r.bottom + 4, items, alignRight: align === 'right' });
     },
   };
 }
