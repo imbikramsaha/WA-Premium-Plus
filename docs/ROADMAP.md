@@ -62,5 +62,6 @@
 - [x] Installers published to GitHub Releases (macOS DMG, Windows installer, Linux AppImage)
 - [ ] Signed and notarized macOS build (needs a paid Apple Developer account)
 - [ ] Signed Windows installer
-- [ ] Linux .deb in addition to AppImage
+- [x] Linux .deb in addition to AppImage (x64 and ARM64)
+- [x] One-line install commands for macOS, Linux and Windows, verified against SHA256SUMS
 - [ ] Auto-update

@@ -1,165 +1,214 @@
-<p align="center">
-  <img src="assets/logo.svg" width="96" alt="WA Premium Plus logo" />
-</p>
+<div align="center">
 
-<h1 align="center">WA Premium Plus</h1>
+<img src="assets/logo.svg" width="96" height="96" alt="WA Premium Plus logo">
 
-<p align="center">
-  A free, open-source WhatsApp desktop app for macOS, Windows and Linux,<br />
-  with message scheduling and automation built in.
-</p>
+# WA Premium Plus
 
-<p align="center">
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
-  <a href="https://github.com/imbikramsaha/WA-Premium-Plus/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/imbikramsaha/WA-Premium-Plus/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="Status: early development" src="https://img.shields.io/badge/status-early%20development-orange.svg">
-</p>
+**WhatsApp on your desktop, with superpowers.**
 
-<p align="center">
-  <img src="docs/screenshots/chat-light.png" width="860" alt="WA Premium Plus: chat list and a conversation with a voice note, a document and a video" />
-</p>
+Schedule messages, statuses and group settings, send to many chats at once,<br>
+and chat with your full history: photos, voice notes and documents included. Free and open source.
 
-> **Unofficial.** WA Premium Plus is an independent open-source project. It is not affiliated with, endorsed by or sponsored by WhatsApp or Meta. "WhatsApp" is a trademark of WhatsApp LLC.
+[![CI](https://github.com/imbikramsaha/WA-Premium-Plus/actions/workflows/ci.yml/badge.svg)](https://github.com/imbikramsaha/WA-Premium-Plus/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/imbikramsaha/WA-Premium-Plus?label=release&color=b8b55a)](https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest)
+[![License](https://img.shields.io/github/license/imbikramsaha/WA-Premium-Plus?color=blue)](LICENSE)
+![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 
-## What it is
+[**Download**](#download) · [What you can do](#what-you-can-do) · [How it works](#how-it-works) · [Privacy](#privacy-and-safety) · [FAQ](#faq)
 
-WA Premium Plus is a desktop app that links to your WhatsApp account the same way WhatsApp Web does: you scan a QR code with your phone. Everything runs on your own computer. There is no server to set up, no account to create and no cost.
+<br>
 
-On top of normal chatting, it adds what WhatsApp doesn't have, starting with **message scheduling**: write a message now and have it sent later, once or on any repeating schedule.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/chat-dark.png">
+  <img src="docs/screenshots/chat-light.png" alt="WA Premium Plus: the chat list and a conversation with a document, a voice note and a video" width="900">
+</picture>
+
+</div>
+
+---
 
 ## Download
 
-Get the installer for your computer from the [latest release](https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest):
+<table>
+<tr>
+<th align="center" width="33%">macOS</th>
+<th align="center" width="33%">Windows</th>
+<th align="center" width="33%">Linux</th>
+</tr>
+<tr>
+<td align="center"><a href="https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest/download/WA-Premium-Plus-mac-arm64.dmg"><b>Download for Apple silicon</b></a><br><a href="https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest/download/WA-Premium-Plus-mac-x64.dmg">Download for Intel</a><br><sub>macOS 12 or later</sub></td>
+<td align="center"><a href="https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest/download/WA-Premium-Plus-windows-setup.exe"><b>Download for Windows</b></a><br><sub>Windows 10 &amp; 11 · x64<br>no admin rights needed</sub></td>
+<td align="center"><a href="https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest/download/WA-Premium-Plus-linux-amd64.deb">.deb</a> · <a href="https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest/download/WA-Premium-Plus-linux-x64.AppImage">AppImage</a> <sub>(x64)</sub><br><a href="https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest/download/WA-Premium-Plus-linux-arm64.deb">.deb</a> · <a href="https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest/download/WA-Premium-Plus-linux-arm64.AppImage">AppImage</a> <sub>(ARM64)</sub></td>
+</tr>
+</table>
 
-| Your computer | File |
+Or install with one command. It picks the right download for your computer, verifies it and starts the app:
+
+**macOS and Linux**
+
+```sh
+curl -fsSL https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest/download/install.sh | sh
+```
+
+**Windows** (PowerShell)
+
+```powershell
+irm https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest/download/install.ps1 | iex
+```
+
+<details>
+<summary><b>More install options</b></summary>
+<br>
+
+| Option | How |
 |---|---|
-| Mac with Apple silicon (M1 and later) | `WA-Premium-Plus-<version>-mac-arm64.dmg` |
-| Mac with Intel processor | `WA-Premium-Plus-<version>-mac-x64.dmg` |
-| Windows 10 or 11 | `WA-Premium-Plus-<version>-windows-setup.exe` |
-| Linux | `WA-Premium-Plus-<version>-linux-x86_64.AppImage` |
+| A specific version | Set `WAPP_VERSION=0.4.2` before the install command (PowerShell: `$env:WAPP_VERSION='0.4.2'`), or browse [all releases](https://github.com/imbikramsaha/WA-Premium-Plus/releases) |
+| Linux without root | `curl -fsSL …/install.sh \| WAPP_FORMAT=appimage sh` installs the AppImage in your home folder. Other distributions get the AppImage automatically |
+| Install without starting | Set `WAPP_NO_LAUNCH=1` |
+| Build it yourself | See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
 
-The app isn't signed by Apple or Microsoft (that costs money every year), so your system asks you to confirm the first launch:
+The install commands check every download against the release's `SHA256SUMS`.
 
-- **macOS:** drag the app to Applications and open it. When macOS says it can't verify the developer, go to **System Settings → Privacy & Security** and click **Open Anyway**.
-- **Windows:** if SmartScreen appears, click **More info → Run anyway**.
-- **Linux:** make the file executable (`chmod +x WA-Premium-Plus-*.AppImage`) and run it.
+**The builds aren't code-signed yet** (that needs paid Apple and Microsoft certificates). If you download in a browser, macOS asks you to confirm the first launch in **System Settings → Privacy & Security → Open Anyway**, and Windows SmartScreen may show **More info → Run anyway**. The install commands avoid both prompts.
 
-Then, in WhatsApp on your phone, open **Linked devices → Link a device** and scan the QR code.
+</details>
 
-## Features
+## Quick start
 
-**Chats**
-- Chat list with unread counts, search, and All / Unread / Groups filters
-- Text messages with delivery and read ticks; edited and deleted messages shown as such
-- Photos, videos, stickers, voice notes and documents: view, play, open and save
-- Send photos, videos and documents (pick, drag and drop, or paste), with a caption
-- Record and send voice notes
-- Group sender names, and a group info panel with members, admins and the invite link
-- Load older messages; desktop notifications for new ones
+1. **Install WA Premium Plus** with a download above or the one-line command.
+2. **Link your WhatsApp.** On your phone, open WhatsApp → **Linked devices** → **Link a device**, and scan the QR code in the app.
+3. **That's it.** Your chats sync in, and you can start chatting and scheduling.
 
-**Scheduled messages**
-- Send once, or repeat every day, every weekday, every week, month or year
-- Custom repeats: every N days, weeks or months, on chosen days of the week, with an optional end date
-- Send to several chats at once, attach a photo, video or document, or post to your status
-- Schedule group settings changes (for groups you admin): who can send messages, who can edit info or add members, approval for new members, disappearing messages, the group's name and description, and resetting the invite link. On/off settings can switch back automatically, for example "only admins can send messages" every night from 22:00 to 07:00
-- A preview of the next send times before you save
-- Edit, cancel, or "Send now"; if the computer was off at the scheduled time, the message is marked *Missed* rather than sent hours late
+## What you can do
 
-**Calls**
-- Voice and video calls open the official WhatsApp Web in a separate window (see Known limitations)
+### Chat like on your phone
+- **All your chats** with unread counts, search, and **All / Unread / Groups** filters.
+- **Send and receive messages** with delivery and read ticks; edited and deleted messages are marked as such.
+- **Photos, videos, stickers, voice notes and documents**: view photos full size, play voice notes and videos, open or save documents.
+- **Send photos, videos and documents** by attaching, dragging them in or pasting, with a caption.
+- **Record and send voice notes.**
+- **Your history, including media**: older photos and files are fetched from your phone when you open a chat, and expired files are requested again.
+- **Groups** show who said what, with a group info panel listing members, admins and the group's settings.
+- **Desktop notifications** for new messages.
 
-**Runs in the background**
-- Keeps running in the system tray when you close the window, so scheduled messages still go out
-- Optional "Open at login" (macOS and Windows)
-- Light and dark themes that follow your system
+### Schedule anything
+- **Messages**: write now, send later. To one chat or **many chats at once** (each gets its own copy), with an optional **photo, video or document**.
+- **Status updates**: post text, a photo or a video to your status at a set time.
+- **Group settings** (for groups you admin): who can send messages, who can edit info or add members, approval for new members, disappearing messages, the group name and description, and resetting the invite link.
+- **Repeats**: every day, every weekday, weekly, monthly, yearly, or custom (every *N* days, weeks or months on the days you pick), with an optional end date.
+- **Switch back automatically** for on/off group settings. For example, *only admins can send messages* every night from 22:00 to 07:00, set up in one step.
+- **See before you save**: the next few send times are shown as you set things up.
+- **Stay in control**: edit, cancel, delete or **Send now**. If the computer was off at the scheduled time, the message is marked *Missed* instead of going out hours late. Network hiccups are retried; problems that can't fix themselves (for example, no longer being a group admin) are reported with the reason.
 
-**Design**
-- Light and dark themes in Citrus, the yellow of Apple's MacBook Neo
-- A native inset title bar on macOS
+### Calls
+- **Voice and video calls** open the official WhatsApp Web in its own window, straight into the person's chat.
 
-| Dark theme | Scheduled messages |
-|---|---|
-| ![Dark theme](docs/screenshots/chat-dark.png) | ![Scheduled messages](docs/screenshots/scheduled-light.png) |
+### Built for your desktop
+- **Keeps running in the tray** when you close the window, so scheduled items still go out. Optional **Open at login** on macOS and Windows.
+- **One app, one connection**: opening it twice brings back the window you already have instead of starting a second copy.
+- **Light and dark themes** in Citrus, the yellow of Apple's MacBook Neo, with a native title bar on macOS.
+- **Everything stays on your computer**: no accounts, no servers, no tracking.
 
-See the [roadmap](docs/ROADMAP.md) for what comes next.
-
-## Known limitations
-
-- **Calls use WhatsApp Web.** No open-source WhatsApp library can carry call audio or video, so the call buttons open the official WhatsApp Web in its own window. Link it once by scanning its QR code. Whether WhatsApp Web can make calls depends on WhatsApp's rollout for your account; if it can't, use the official WhatsApp desktop app for calls.
-- **Keep the app running for scheduled messages.** Messages are sent from your computer. If it is off or asleep at the scheduled time, the message waits; after an hour it is marked *Missed*.
-- **Older media is fetched again from your phone** when you open a chat, so your phone needs to be online. Anything it can't provide shows a note to open it on your phone.
-- **Bulk messaging can get a number banned.** WA Premium Plus connects as an unofficial linked device. Normal use is fine, but sending large volumes of messages, especially to people who haven't messaged you, can get a number banned by WhatsApp.
-- **Features we won't build:** keeping messages the sender deleted, saving view-once media, and other modded-client tricks that break other people's privacy expectations.
+<p align="center">
+  <img src="docs/screenshots/scheduled-light.png" alt="The Scheduled screen with upcoming and sent messages" width="760">
+</p>
 
 ## How it works
 
-```
-WA Premium Plus (one desktop app)
-├─ Window (React)        chats, conversation, scheduled messages
-└─ Background (Electron main process, keeps running in the tray)
-   ├─ WhatsApp connection   Baileys, the open-source library behind WAHA's NOWEB engine
-   ├─ Local database        SQLite (built into Node), stored in your user data folder
-   └─ Scheduler             checks every 15 seconds and sends what is due
+```mermaid
+flowchart LR
+    subgraph computer["💻 Your computer"]
+        window["WA Premium Plus window<br/><sub>chats · scheduling · calls</sub>"]
+        main["Background service<br/><sub>runs in the tray</sub>"]
+        db[("Local database<br/><sub>chats, media, schedules</sub>")]
+        window <--> main
+        main <--> db
+    end
+    phone["📱 WhatsApp on your phone"]
+    wa["WhatsApp servers"]
+    main <-->|"linked device<br/>(end-to-end encrypted)"| wa
+    phone <--> wa
 ```
 
-Your chats, scheduled messages and WhatsApp login stay in the app's data folder on your computer:
+WA Premium Plus links to your account as a **linked device**, the same way WhatsApp Web does, using [Baileys](https://github.com/WhiskeySockets/Baileys) (the open-source library behind [WAHA](https://github.com/devlikeapro/waha)'s NOWEB engine). Messages stay end-to-end encrypted between WhatsApp and your computer. Your chats, media and schedules are stored in a local database on your computer, and the scheduler runs in the background service, so it works with the window closed.
 
-| OS | Location |
+## Privacy and safety
+
+| | |
 |---|---|
-| macOS | `~/Library/Application Support/WA Premium Plus` |
-| Windows | `%APPDATA%\WA Premium Plus` |
-| Linux | `~/.config/WA Premium Plus` |
+| **Your data** | Chats, media and scheduled items live only on your computer. There are no WA Premium Plus servers, accounts or analytics. |
+| **Your WhatsApp** | The app connects as a linked device; you can remove it any time from **Linked devices** on your phone, or with **Log out** in the app. |
+| **Respectful by design** | No tricks that break other people's privacy: no keeping messages the sender deleted, no saving view-once media. |
+| **Use it responsibly** | This is an unofficial client. Normal use is fine, but sending large volumes of messages, especially to people who haven't messaged you, can get a number banned by WhatsApp. |
 
-## Run from source
+## Platform support
 
-1. Install [Node.js](https://nodejs.org) 22.18 or newer.
-2. Clone and start the app:
-   ```bash
-   git clone https://github.com/imbikramsaha/WA-Premium-Plus.git
-   cd WA-Premium-Plus
-   npm install
-   npm run dev
-   ```
-3. In WhatsApp on your phone, open **Linked devices → Link a device** and scan the QR code.
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| **Versions** | 12 Monterey and later | 10 and 11 | Ubuntu 22.04+, Debian 12+ (.deb); other distributions via AppImage |
+| **Processors** | Apple silicon, Intel | x64 | x64, ARM64 |
+| **Tray** | Menu bar | System tray | System tray (GNOME needs the AppIndicator extension) |
+| **Open at login** | ✓ | ✓ | Use your desktop's startup settings |
 
-## Development
+## FAQ
 
-| Command | What it does |
-|---|---|
-| `npm run dev` | Start the app with hot reload |
-| `npm run dev:debug` | Same, with Chrome DevTools remote debugging on port 9333 |
-| `npm test` | Run the tests (scheduler, repeat rules, database, voice-note conversion) |
-| `npm run typecheck` | Type-check the main process and the window |
-| `npm run build` | Build into `out/` |
-| `npm run dist` | Build installers for the current OS into `release/` |
-| `git tag vX.Y.Z && git push --tags` | Build installers for all platforms on GitHub and publish a release |
-| `npm run icons` | Regenerate app and tray icons from the logo geometry |
+<details>
+<summary><b>Is this an official WhatsApp app?</b></summary>
+<br>
+No. WA Premium Plus is an independent, open-source project and isn't affiliated with WhatsApp or Meta. It connects to your account as a linked device, like WhatsApp Web.
+</details>
 
-Environment variables for development:
+<details>
+<summary><b>Do scheduled messages go out if my computer is off?</b></summary>
+<br>
+No. They're sent from your computer, so keep WA Premium Plus running (it stays in the tray when you close the window, and can open at login). If the computer was off or asleep at the scheduled time, a one-off message is marked <i>Missed</i> after an hour rather than sent late; you can send it with one click. Repeating messages simply wait for their next time.
+</details>
 
-- `WAPP_DATA_DIR=/some/folder` uses a separate profile, for example to test with a second WhatsApp account.
-- `WAPP_LOG_LEVEL=debug` prints WhatsApp connection logs.
-- `WAPP_OFFLINE=1` shows the stored chats without connecting to WhatsApp. Combined with `WAPP_DATA_DIR` pointing at a copy of a profile (without its `auth` folder), this lets you test the window against real data without disturbing that account's session.
+<details>
+<summary><b>Why can't I open some older photos?</b></summary>
+<br>
+Opening a chat asks your phone to send its recent media again, and expired files are requested again automatically. Your phone needs to be online. If the phone no longer has a file, the app tells you to open it there.
+</details>
 
-Project layout:
+<details>
+<summary><b>How do voice and video calls work?</b></summary>
+<br>
+No open-source WhatsApp library supports call audio or video, so the call buttons open the official WhatsApp Web in its own window, straight into the person's chat. Link it once by scanning its QR code. Whether WhatsApp Web can make calls depends on WhatsApp's rollout for your account; if it can't, use the official WhatsApp desktop app for calls.
+</details>
 
-```
-src/main/       background process: WhatsApp connection, database, scheduler, tray
-src/preload/    the bridge that exposes a small API to the window
-src/renderer/   the window (React)
-src/shared/     types shared by both sides
-tests/          tests (node:test)
-```
+<details>
+<summary><b>Can I schedule group settings for any group?</b></summary>
+<br>
+Only for groups where you're an admin; WhatsApp doesn't let other members change settings. The app checks this when the change is due and reports it if you're no longer an admin.
+</details>
+
+<details>
+<summary><b>Where is my data stored, and how do I uninstall?</b></summary>
+<br>
+
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| Chats, media, schedules | `~/Library/Application Support/WA Premium Plus` | `%APPDATA%\WA Premium Plus` | `~/.config/WA Premium Plus` |
+
+Choose **Log out** in the app first to unlink it from your phone and delete its data. Then remove the app: move it to the Trash (macOS), use **Settings → Apps** (Windows), or `sudo apt remove wa-premium-plus` / delete `~/.local/share/wa-premium-plus` (Linux).
+</details>
+
+## Roadmap
+
+- [x] **Chats, media, groups and calls** on macOS, Windows and Linux
+- [x] **Scheduling** for messages, statuses and group settings, with repeats
+- [ ] **Quick replies and automation rules** (keyword replies, away messages)
+- [ ] **Multiple WhatsApp numbers** in one app
+- [ ] **Code-signed builds and auto-update**
+
+See the full [roadmap](docs/ROADMAP.md).
 
 ## Contributing
 
-Issues and pull requests are welcome. For larger changes, please open an issue first so we can agree on the approach.
-
-## Credits
-
-- [Baileys](https://github.com/WhiskeySockets/Baileys) (MIT) for the WhatsApp connection
-- [WAHA](https://github.com/devlikeapro/waha), whose NOWEB engine is built on the same library
+Bug reports, ideas and pull requests are welcome. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for building, testing and the project layout. For larger changes, please open an issue first.
 
 ## License
 
-[MIT](LICENSE)
+WA Premium Plus is open source under the [MIT License](LICENSE).
+
+<sub>WhatsApp is a trademark of WhatsApp LLC. WA Premium Plus is an independent project and is not affiliated with, endorsed by or sponsored by WhatsApp or Meta.</sub>
