@@ -122,26 +122,32 @@ export function Conversation({
     const markReadIfLooking = () => {
       if (userIsLooking()) void window.wapp.markRead(chat.id);
     };
+    let pruneTimer: number | undefined;
     const off = window.wapp.onEvent((event) => {
       if (event.type === 'message' && event.message.chatId === chat.id) {
         setMessages((prev) => upsertMessage(prev, event.message));
         if (!event.message.fromMe) markReadIfLooking();
       } else if (event.type === 'ack' && event.chatId === chat.id) {
         setMessages((prev) => prev.map((m) => (m.id === event.messageId ? { ...m, ack: event.ack } : m)));
-      } else if (event.type === 'chats-changed') {
-        // A message deleted for me: drop it from the list.
-        void window.wapp.listMessages(chat.id).then((list) => {
-          if (!active) return;
-          const ids = new Set(list.map((m) => m.id));
-          const oldestShown = list[0]?.timestamp ?? 0;
-          setMessages((prev) => prev.filter((m) => m.timestamp < oldestShown || ids.has(m.id)));
-        });
+      } else if (event.type === 'chats-changed' && pruneTimer === undefined) {
+        // A message deleted for me: drop it from the list. History sync sends many of these
+        // events, so check at most a few times a second.
+        pruneTimer = window.setTimeout(() => {
+          pruneTimer = undefined;
+          void window.wapp.listMessages(chat.id).then((list) => {
+            if (!active) return;
+            const ids = new Set(list.map((m) => m.id));
+            const oldestShown = list[0]?.timestamp ?? 0;
+            setMessages((prev) => prev.filter((m) => m.timestamp < oldestShown || ids.has(m.id)));
+          });
+        }, 400);
       }
     });
     window.addEventListener('focus', markReadIfLooking);
     return () => {
       active = false;
       off();
+      window.clearTimeout(pruneTimer);
       window.removeEventListener('focus', markReadIfLooking);
     };
   }, [chat.id, loadLatest]);

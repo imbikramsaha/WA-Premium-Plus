@@ -170,6 +170,8 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
   private readonly historyRequested = new Set<string>();
   private readonly avatarQueue: string[] = [];
   private readonly avatarQueued = new Set<string>();
+  /** Pictures asked for before the connection opened; fetched once it does. */
+  private readonly avatarWaiting = new Set<string>();
   private avatarsActive = 0;
   private readonly opts: WhatsAppOptions;
 
@@ -791,8 +793,12 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
   }
 
   private queueAvatar(id: string): void {
-    if (this.avatarQueued.has(id) || !this.sock || !this.isOpen) return;
     if (!/@(s\.whatsapp\.net|g\.us|lid|newsletter)$/.test(id)) return;
+    if (!this.sock || !this.isOpen) {
+      if (this.avatarWaiting.size < 2000) this.avatarWaiting.add(id);
+      return;
+    }
+    if (this.avatarQueued.has(id)) return;
     this.avatarQueued.add(id);
     this.avatarQueue.push(id);
     this.pumpAvatars();
@@ -1172,6 +1178,9 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
       });
       void this.syncGroups(sock);
       this.scheduleLidResolution();
+      const waiting = [...this.avatarWaiting];
+      this.avatarWaiting.clear();
+      for (const id of waiting) this.queueAvatar(id);
     }
 
     if (connection === 'close') {
