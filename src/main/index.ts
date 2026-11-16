@@ -1,11 +1,13 @@
-import { basename, join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { app, BrowserWindow, Menu, nativeTheme, net, Notification, protocol, shell, Tray } from 'electron';
-import type { AppEvent, ChatMessage } from '../shared/types';
+import { app, BrowserWindow, ipcMain, Menu, nativeTheme, net, Notification, protocol, shell, Tray } from 'electron';
+import type { AppEvent, AppSettings, ChatMessage } from '../shared/types';
 import type { AccountHost } from './account';
 import { Accounts } from './accounts';
 import { openCallsWindow } from './calls';
 import { registerIpc } from './ipc';
+import { Updater, type InstallKind } from './updater';
 
 const APP_NAME = 'WA Premium Plus';
 const resourcesDir = app.isPackaged
@@ -168,6 +170,49 @@ function main(): void {
     accountsTimer = setTimeout(() => send({ type: 'accounts-changed' }), 400);
   };
 
+  // App-wide settings (per-account settings live in each account's database).
+  const settingsFile = join(dataDir, 'app-settings.json');
+  let appSettings: AppSettings = { autoCheckUpdates: true, autoDownloadUpdates: true };
+  try {
+    appSettings = { ...appSettings, ...(JSON.parse(readFileSync(settingsFile, 'utf8')) as Partial<AppSettings>) };
+  } catch {
+    // first run
+  }
+
+  const kind: InstallKind = !app.isPackaged
+    ? 'unpackaged'
+    : process.platform === 'darwin'
+      ? 'mac'
+      : process.platform === 'win32'
+        ? 'windows'
+        : process.env.APPIMAGE
+          ? 'appimage'
+          : 'deb';
+  const updater = new Updater({
+    // WAPP_FAKE_VERSION and WAPP_UPDATE_API exist for testing updates.
+    currentVersion: process.env.WAPP_FAKE_VERSION ?? app.getVersion(),
+    kind,
+    arch: process.arch,
+    cacheDir: join(app.getPath('temp'), 'wa-premium-plus-updates'),
+    installedPath: kind === 'mac' ? resolve(process.execPath, '../../..') : kind === 'appimage' ? process.env.APPIMAGE : undefined,
+    apiUrl: process.env.WAPP_UPDATE_API,
+    settings: () => appSettings,
+    emit: (state) => send({ type: 'update', state }),
+    quit: () => app.quit(),
+    openPath: (path) => shell.openPath(path),
+  });
+  ipcMain.handle('wapp:getAppSettings', () => appSettings);
+  ipcMain.handle('wapp:saveAppSettings', (_e, value: unknown) => {
+    const v = (value ?? {}) as Partial<AppSettings>;
+    appSettings = { autoCheckUpdates: v.autoCheckUpdates !== false, autoDownloadUpdates: v.autoDownloadUpdates !== false };
+    writeFileSync(settingsFile, JSON.stringify(appSettings, null, 2));
+  });
+  ipcMain.handle('wapp:getUpdateState', () => updater.current);
+  ipcMain.handle('wapp:checkForUpdates', () => updater.check());
+  ipcMain.handle('wapp:downloadUpdate', () => updater.download());
+  ipcMain.handle('wapp:installUpdate', () => updater.install());
+  ipcMain.handle('wapp:appVersion', () => app.getVersion());
+
   // eslint-disable-next-line prefer-const
   let accounts: Accounts;
   const host: AccountHost = {
@@ -243,6 +288,7 @@ function main(): void {
     createWindow(!startedHidden());
     createTray();
     accounts.startAll();
+    updater.start();
 
     app.on('activate', showWindow);
   });

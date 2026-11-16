@@ -13,6 +13,7 @@ import { ScheduleDialog, type ScheduleDraft } from './ScheduleDialog';
 import { ScheduledList } from './ScheduledList';
 import { FollowChannelDialog, NewChatDialog, NewGroupDialog } from './ShareDialogs';
 import { StatusView } from './StatusView';
+import { useUpdateState } from './SettingsView';
 
 export type View = 'chats' | 'status' | 'calls' | 'scheduled';
 
@@ -29,6 +30,8 @@ function callsIntroSeen(): boolean {
 /** Extra views and conversation actions, added by later features. */
 export interface MainScreenExtras {
   railItems?: Array<{ view: string; title: string; icon: ReactNode; badge?: number }>;
+  /** Shown at the bottom of the rail, above the account switcher. */
+  bottomRailItems?: Array<{ view: string; title: string; icon: ReactNode }>;
   renderView?: (
     view: string,
     api: { openChat: (chatId: string, messageId?: string) => void; chats: ChatSummary[]; labels: Label[]; connected: boolean },
@@ -52,6 +55,8 @@ export function MainScreen({ connection, extras }: { connection: ConnectionState
   const [callsIntro, setCallsIntro] = useState<{ chatId?: string } | null>(null);
   const [dialog, setDialog] = useState<'chat' | 'group' | 'channel' | 'label' | null>(null);
   const { menu, close: closeMenu, openUnder } = useMenu();
+  const update = useUpdateState();
+  const [updateDismissed, setUpdateDismissed] = useState(false);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -142,6 +147,17 @@ export function MainScreen({ connection, extras }: { connection: ConnectionState
           </button>
         ))}
         <div className="rail-spacer" />
+        {(extras?.bottomRailItems ?? []).map((item) => (
+          <button
+            key={item.view}
+            className={`rail-button${view === item.view ? ' active' : ''}`}
+            onClick={() => setView(item.view)}
+            title={item.title}
+          >
+            {item.icon}
+            {item.view === 'settings' && update && (update.status === 'ready' || update.status === 'manual') && <span className="rail-dot" />}
+          </button>
+        ))}
         <AccountSwitcher />
       </nav>
 
@@ -187,6 +203,17 @@ export function MainScreen({ connection, extras }: { connection: ConnectionState
           {!connected && (
             <div className="banner">
               Connecting to WhatsApp… Scheduled messages will be sent as soon as the connection is back.
+            </div>
+          )}
+          {update?.status === 'ready' && !updateDismissed && view !== 'settings' && (
+            <div className="banner update">
+              Version {update.latest} is ready.
+              <button className="button small primary" onClick={() => void window.wapp.installUpdate().catch((err) => window.alert(errorMessage(err)))}>
+                Restart to update
+              </button>
+              <button className="button small ghost" onClick={() => setUpdateDismissed(true)}>
+                Later
+              </button>
             </div>
           )}
           {view === 'scheduled' ? (

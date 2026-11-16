@@ -597,6 +597,7 @@ export type AppEvent =
   /** A different account is now shown: the window reloads its data. */
   | { type: 'account-switched' }
   | { type: 'automation-changed' }
+  | { type: 'update'; state: UpdateState }
   /** Open a chat (from a notification). */
   | { type: 'open-chat'; chatId: string }
   | { type: 'reminders-changed' }
@@ -709,6 +710,16 @@ export interface WappApi {
   saveTextFile(defaultName: string, content: string): Promise<string | null>;
   getInsights(days: number): Promise<Insights>;
 
+  // App settings and updates
+  getAppSettings(): Promise<AppSettings>;
+  saveAppSettings(settings: AppSettings): Promise<void>;
+  getUpdateState(): Promise<UpdateState>;
+  checkForUpdates(): Promise<UpdateState>;
+  downloadUpdate(): Promise<void>;
+  /** Quits, installs the downloaded version and starts it again. */
+  installUpdate(): Promise<void>;
+  appVersion(): Promise<string>;
+
   // Webhooks
   listWebhooks(): Promise<Webhook[]>;
   saveWebhook(input: { id?: number; url: string; events: WebhookEvent[]; enabled: boolean }): Promise<void>;
@@ -752,4 +763,39 @@ export interface WappApi {
   /** Local path of a file chosen in a file input or dropped onto the window. */
   getPathForFile(file: File): string;
   onEvent(listener: (event: AppEvent) => void): () => void;
+}
+
+// --- Updates ---
+
+export type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'up-to-date'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  | 'manual'
+  | 'error';
+
+export interface UpdateState {
+  status: UpdateStatus;
+  current: string;
+  latest?: string;
+  /** Release notes (Markdown) of the latest version. */
+  notes?: string;
+  /** The release's page on GitHub. */
+  url?: string;
+  /** Download progress, 0–1. */
+  progress?: number;
+  error?: string;
+  /** For 'manual': how to update (e.g. the install command for .deb installs). */
+  instructions?: string;
+  checkedAt?: number;
+}
+
+export interface AppSettings {
+  /** Look for new versions on GitHub automatically. */
+  autoCheckUpdates: boolean;
+  /** Download new versions in the background, ready to install on restart. */
+  autoDownloadUpdates: boolean;
 }

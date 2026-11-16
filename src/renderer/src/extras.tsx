@@ -4,7 +4,8 @@
 import { useMemo, useState } from 'react';
 import { AutomationView } from './components/AutomationView';
 import { BroadcastsView } from './components/BroadcastsView';
-import { BellRingIcon, BoltIcon, ChartIcon, ExportIcon, MegaphoneIcon, UsersIcon } from './components/Icons';
+import { BellRingIcon, BoltIcon, ChartIcon, ExportIcon, MegaphoneIcon, SettingsIcon, UsersIcon } from './components/Icons';
+import { SettingsView } from './components/SettingsView';
 import { InsightsView } from './components/InsightsView';
 import { ExportDialog } from './components/ExportDialog';
 import { toCsv } from '../../shared/csv';
@@ -23,10 +24,12 @@ export function useExtras(): MainScreenExtras {
         { view: 'automation', title: 'Automation', icon: <BoltIcon /> },
         { view: 'insights', title: 'Insights', icon: <ChartIcon /> },
       ],
+      bottomRailItems: [{ view: 'settings', title: 'Settings', icon: <SettingsIcon /> }],
       renderView: (view, api) => {
         if (view === 'broadcasts') return <BroadcastsView chats={api.chats} connected={api.connected} />;
         if (view === 'automation') return <AutomationView chats={api.chats} labels={api.labels} onOpenChat={api.openChat} />;
         if (view === 'insights') return <InsightsView onOpenChat={api.openChat} />;
+        if (view === 'settings') return <SettingsView onExportAll={() => setExporting({})} />;
         return null;
       },
       conversation: {
