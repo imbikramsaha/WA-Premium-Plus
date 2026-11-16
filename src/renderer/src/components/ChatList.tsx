@@ -20,7 +20,10 @@ export function ChatList({
     return chats.filter(
       (c) =>
         (filter === 'all' || (filter === 'unread' ? c.unreadCount > 0 : c.isGroup)) &&
-        (!q || c.name.toLowerCase().includes(q) || c.id.includes(q)),
+        (q
+          ? c.name.toLowerCase().includes(q) || c.id.includes(q)
+          : // Chats WhatsApp lists but that were never used only clutter the list; search still finds them.
+            Boolean(c.lastMessage || c.lastActivity || c.unreadCount > 0)),
     );
   }, [chats, query, filter]);
 
@@ -48,9 +51,9 @@ export function ChatList({
               <div className="chat-row-main">
                 <div className="chat-row-top">
                   <span className="chat-name">{chat.name}</span>
-                  {chat.lastMessage && (
+                  {(chat.lastMessage || chat.lastActivity) && (
                     <span className={`chat-time${chat.unreadCount > 0 ? ' unread' : ''}`}>
-                      {formatChatTime(chat.lastMessage.timestamp)}
+                      {formatChatTime(chat.lastMessage?.timestamp ?? chat.lastActivity!)}
                     </span>
                   )}
                 </div>

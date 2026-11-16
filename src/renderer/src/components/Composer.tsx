@@ -189,7 +189,7 @@ export const Composer = forwardRef<
                 }
               }}
               placeholder={
-                files.length > 0 ? 'Add a caption' : connected ? 'Type a message' : 'Waiting for connection… you can still schedule'
+                files.length > 0 ? 'Add a caption' : connected ? 'Type a message' : 'Offline — you can still schedule'
               }
             />
             <button

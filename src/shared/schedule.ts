@@ -96,6 +96,21 @@ export function nextOccurrence(anchorAt: number, rule: RepeatRule, after: number
   return next;
 }
 
+/**
+ * The first send: the chosen time, unless the rule only sends on certain weekdays and the
+ * chosen day isn't one of them, in which case the next matching day at the same time.
+ */
+export function firstOccurrence(anchorAt: number, rule: RepeatRule): number {
+  const days =
+    rule.repeat === 'weekdays'
+      ? [1, 2, 3, 4, 5]
+      : rule.repeat === 'custom' && (rule.unit ?? 'week') === 'week' && rule.weekdays?.length
+        ? rule.weekdays
+        : null;
+  if (!days || days.includes(new Date(anchorAt).getDay())) return anchorAt;
+  return nextOccurrence(anchorAt, rule, anchorAt) ?? anchorAt;
+}
+
 /** Checks and cleans up a rule coming from the window. Throws on invalid input. */
 export function normalizeRule(value: unknown): RepeatRule {
   const rule = (value ?? {}) as Partial<RepeatRule>;

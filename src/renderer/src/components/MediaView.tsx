@@ -77,8 +77,8 @@ export function MediaView({ message, onOpenImage }: { message: ChatMessage; onOp
   if (kind === 'image' || kind === 'video') {
     if (url && kind === 'image') {
       return (
-        <button className="media-frame" style={{ aspectRatio: aspect }} onClick={() => onOpenImage(url)}>
-          <img src={url} alt={message.body || 'Photo'} />
+        <button className="media-frame loaded" onClick={() => onOpenImage(url)}>
+          <img src={url} alt={message.body || 'Photo'} width={media.width} height={media.height} />
         </button>
       );
     }

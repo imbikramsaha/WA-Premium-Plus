@@ -70,6 +70,8 @@ export interface ChatSummary {
   name: string;
   isGroup: boolean;
   unreadCount: number;
+  /** Last activity WhatsApp reported (Unix seconds), even when we have no messages. */
+  lastActivity?: number;
   lastMessage?: Pick<ChatMessage, 'body' | 'kind' | 'fromMe' | 'timestamp'>;
 }
 

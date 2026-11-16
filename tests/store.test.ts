@@ -60,6 +60,15 @@ describe('Store', () => {
     assert.deepEqual(store.unresolvedLids(), []);
   });
 
+  it('fills in a missing group sender when the message is synced again', () => {
+    const store = new Store(':memory:');
+    const group = '120363000000000001@g.us';
+    store.upsertMessage(message(group, 'g1', 5));
+    store.upsertMessage(message(group, 'g1', 5, { author: PN }));
+    assert.equal(store.getMessage(group, 'g1')?.author, PN);
+    assert.equal(store.countMissingAuthors(group), 0);
+  });
+
   it('applies edits and deletions', () => {
     const store = new Store(':memory:');
     store.upsertMessage(message(PN, 'a', 5));

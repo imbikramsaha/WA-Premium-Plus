@@ -8,9 +8,12 @@ import makeWASocket, {
   downloadMediaMessage,
   fetchLatestBaileysVersion,
   fetchLatestWaWebVersion,
+  getContentType,
+  getUrlFromDirectPath,
   isLidUser,
   isPnUser,
   jidNormalizedUser,
+  normalizeMessageContent,
   proto,
   toNumber,
   useMultiFileAuthState,
@@ -39,6 +42,11 @@ export interface WhatsAppOptions {
   emit: (event: AppEvent) => void;
   /** Called for each new incoming message, for desktop notifications. */
   onIncoming?: (message: ChatMessage, chatName: string) => void;
+  /**
+   * Development only: show stored data without connecting to WhatsApp (for example to test
+   * the window against a copy of a real profile without disturbing that account's session).
+   */
+  offline?: boolean;
 }
 
 const logger = pino({ level: process.env.WAPP_LOG_LEVEL ?? 'silent' });
@@ -56,6 +64,18 @@ async function currentWaWebVersion(): Promise<WaVersion | undefined> {
   if (fromWeb?.isLatest) return fromWeb.version;
   const fromBaileys = await fetchLatestBaileysVersion().catch(() => null);
   return fromBaileys?.version;
+}
+
+/** Channel media isn't encrypted: fetch it straight from WhatsApp's media servers. */
+async function downloadChannelMedia(message: WAMessage): Promise<Buffer> {
+  const content = normalizeMessageContent(message.message);
+  const type = content ? getContentType(content) : undefined;
+  const media = (type ? content?.[type] : undefined) as { url?: string | null; directPath?: string | null } | undefined;
+  const url = media?.directPath ? getUrlFromDirectPath(media.directPath) : media?.url;
+  if (!url) throw new Error('This media has no download link.');
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Download failed (${res.status}).`);
+  return Buffer.from(await res.arrayBuffer());
 }
 
 /** Content for sending a file, chosen by what kind of file it is. */
@@ -100,6 +120,10 @@ export class WhatsApp {
   }
 
   async start(): Promise<void> {
+    if (this.opts.offline) {
+      this.setState({ status: 'connecting', linked: true });
+      return;
+    }
     this.stopped = false;
     await this.connect();
   }
@@ -222,7 +246,7 @@ export class WhatsApp {
     const message = store.getMessage(chatId, messageId);
     if (!message?.raw) throw new Error('This media is no longer available here. Open it on your phone.');
     const raw = reviveMessage(message.raw);
-    const buffer = await downloadMediaMessage(
+    const buffer = chatId.endsWith('@newsletter') ? await downloadChannelMedia(raw) : await downloadMediaMessage(
       raw,
       'buffer',
       {},
@@ -248,7 +272,9 @@ export class WhatsApp {
   async refreshChatMedia(chatId: string): Promise<boolean> {
     const sock = this.sock;
     if (!sock || !this.isOpen || this.historyRequested.has(chatId)) return false;
-    if (this.opts.store.countUnavailableMedia(chatId) === 0) return false;
+    if (chatId.endsWith('@newsletter')) return false; // channels don't support history requests
+    const { store } = this.opts;
+    if (store.countUnavailableMedia(chatId) === 0 && store.countMissingAuthors(chatId) === 0) return false;
     const newest = this.opts.store.newestMessage(chatId);
     if (!newest) return false;
     this.historyRequested.add(chatId);

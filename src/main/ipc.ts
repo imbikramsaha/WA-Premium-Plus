@@ -1,7 +1,7 @@
 import { copyFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { dialog, ipcMain, shell, systemPreferences } from 'electron';
-import { normalizeRule } from '../shared/schedule';
+import { firstOccurrence, normalizeRule } from '../shared/schedule';
 import type { ScheduleTarget } from '../shared/types';
 import { describeFile, keepAttachment } from './media';
 import type { Scheduler } from './scheduler';
@@ -163,9 +163,10 @@ export function registerIpc({
     const attachment: Attachment | null = input.attachmentPath
       ? await keepAttachment(input.attachmentPath, attachmentsDir)
       : null;
+    const sendAt = firstOccurrence(input.sendAt, input.rule);
     store.transaction(() => {
       for (const chatId of input.chatIds) {
-        store.createScheduled({ ...input, chatId, attachment });
+        store.createScheduled({ ...input, chatId, attachment, sendAt, anchorAt: input.sendAt });
       }
     });
     scheduledChanged();
@@ -182,7 +183,13 @@ export function registerIpc({
     else if (typeof input.attachmentPath === 'string' && input.attachmentPath !== previous?.attachment?.path) {
       attachment = await keepAttachment(input.attachmentPath, attachmentsDir);
     }
-    store.updateScheduled(scheduleId, { ...input, chatId: input.chatIds[0]!, attachment });
+    store.updateScheduled(scheduleId, {
+      ...input,
+      chatId: input.chatIds[0]!,
+      attachment,
+      sendAt: firstOccurrence(input.sendAt, input.rule),
+      anchorAt: input.sendAt,
+    });
     const oldPath = previous?.attachment?.path;
     if (attachment !== undefined && oldPath && !store.isAttachmentUsed(oldPath)) await rm(oldPath, { force: true });
     scheduledChanged();

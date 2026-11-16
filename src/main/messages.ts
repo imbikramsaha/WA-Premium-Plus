@@ -54,9 +54,13 @@ interface MediaFields {
   url?: string | null;
 }
 
-/** Media details as stored: `thumb` is plain base64 here (the store adds the data: prefix). */
-function mediaInfo(media: MediaFields | null | undefined): MediaInfo {
+/**
+ * Media details as stored: `thumb` is plain base64 here (the store adds the data: prefix).
+ * Channel (newsletter) media is not end-to-end encrypted, so it has no media key.
+ */
+function mediaInfo(media: MediaFields | null | undefined, unencrypted = false): MediaInfo {
   const m = media ?? {};
+  const located = Boolean(m.directPath || m.url);
   return {
     mimetype: m.mimetype ?? undefined,
     fileName: m.fileName ?? undefined,
@@ -66,7 +70,7 @@ function mediaInfo(media: MediaFields | null | undefined): MediaInfo {
     thumb: m.jpegThumbnail?.length ? Buffer.from(m.jpegThumbnail).toString('base64') : undefined,
     width: m.width ?? undefined,
     height: m.height ?? undefined,
-    downloadable: Boolean(m.mediaKey?.length && (m.directPath || m.url)),
+    downloadable: located && (unencrypted || Boolean(m.mediaKey?.length)),
   };
 }
 
@@ -76,10 +80,11 @@ interface Described {
   media?: MediaInfo;
 }
 
-function describe(content: proto.IMessage): Described | null {
+function describe(content: proto.IMessage, unencrypted = false): Described | null {
+  const info = (media: MediaFields | null | undefined) => mediaInfo(media, unencrypted);
   // Wrappers that newer WhatsApp versions put around ordinary messages.
   const inner = content.associatedChildMessage?.message ?? content.lottieStickerMessage?.message;
-  if (inner) return describe(normalizeMessageContent(inner) ?? inner);
+  if (inner) return describe(normalizeMessageContent(inner) ?? inner, unencrypted);
 
   const type = getContentType(content);
   if (!type || IGNORED.has(type)) return null;
@@ -89,25 +94,25 @@ function describe(content: proto.IMessage): Described | null {
     case 'extendedTextMessage':
       return { kind: 'text', body: content.extendedTextMessage?.text ?? '' };
     case 'imageMessage':
-      return { kind: 'image', body: content.imageMessage?.caption ?? '', media: mediaInfo(content.imageMessage) };
+      return { kind: 'image', body: content.imageMessage?.caption ?? '', media: info(content.imageMessage) };
     case 'videoMessage':
-      return { kind: 'video', body: content.videoMessage?.caption ?? '', media: mediaInfo(content.videoMessage) };
+      return { kind: 'video', body: content.videoMessage?.caption ?? '', media: info(content.videoMessage) };
     case 'ptvMessage':
-      return { kind: 'video', body: '', media: mediaInfo(content.ptvMessage) };
+      return { kind: 'video', body: '', media: info(content.ptvMessage) };
     case 'audioMessage':
-      return { kind: 'audio', body: '', media: mediaInfo(content.audioMessage) };
+      return { kind: 'audio', body: '', media: info(content.audioMessage) };
     case 'documentMessage':
       return {
         kind: 'document',
         body: content.documentMessage?.caption ?? '',
-        media: mediaInfo(content.documentMessage),
+        media: info(content.documentMessage),
       };
     case 'documentWithCaptionMessage': {
       const doc = content.documentWithCaptionMessage?.message?.documentMessage;
-      return { kind: 'document', body: doc?.caption ?? '', media: mediaInfo(doc) };
+      return { kind: 'document', body: doc?.caption ?? '', media: info(doc) };
     }
     case 'stickerMessage':
-      return { kind: 'sticker', body: '', media: mediaInfo(content.stickerMessage) };
+      return { kind: 'sticker', body: '', media: info(content.stickerMessage) };
     case 'locationMessage':
       return { kind: 'location', body: content.locationMessage?.name || content.locationMessage?.address || '' };
     case 'liveLocationMessage':
@@ -191,12 +196,14 @@ export function parseMessage(
     return null;
   }
 
-  const described = describe(content);
+  const described = describe(content, chatId.endsWith('@newsletter'));
   if (!described) return null;
 
   const isGroup = chatId.endsWith('@g.us');
   const fromMe = Boolean(key.fromMe);
-  const author = isGroup && key.participant ? resolveJid(key.participant, key.participantAlt) : undefined;
+  // Live messages carry the group sender in the key; history-sync copies carry it at the top level.
+  const participant = key.participant || m.participant || undefined;
+  const author = isGroup && participant ? resolveJid(participant, key.participantAlt) : undefined;
   const message: StoredMessage = {
     id: key.id,
     chatId,

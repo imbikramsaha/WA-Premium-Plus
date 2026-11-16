@@ -79,8 +79,9 @@ export function Conversation({
       if (!active) return;
       setMessages(list);
       setHasOlder(list.length >= 100);
-      // Older media may lack download keys; ask the phone to send them again.
-      if (list.some((m) => m.media && !m.media.downloadable)) void window.wapp.refreshChatMedia(chat.id);
+      // Messages synced by older versions may lack media keys or group senders; the main
+      // process asks the phone to re-send the chat's history when that would help.
+      void window.wapp.refreshChatMedia(chat.id);
     });
     if (userIsLooking()) void window.wapp.markRead(chat.id);
 
@@ -179,9 +180,9 @@ export function Conversation({
               <InfoIcon />
             </button>
           )}
-          <button className="button ghost" onClick={() => onSchedule('', undefined, () => undefined)}>
+          <button className="button ghost" title="Schedule a message" onClick={() => onSchedule('', undefined, () => undefined)}>
             <ClockIcon size={18} />
-            Schedule
+            <span className="button-label">Schedule</span>
           </button>
         </header>
 
@@ -209,7 +210,9 @@ export function Conversation({
                 {newDay && <div className="day-separator">{formatDay(m.timestamp)}</div>}
                 <div className={`bubble-row ${m.fromMe ? 'out' : 'in'}`}>
                   <div className={`bubble${m.kind === 'sticker' ? ' sticker' : ''}${m.kind === 'deleted' ? ' deleted' : ''}`}>
-                    {chat.isGroup && !m.fromMe && <div className="bubble-author">{m.authorName || formatId(m.author)}</div>}
+                    {chat.isGroup && !m.fromMe && (m.authorName || m.author) && (
+                      <div className="bubble-author">{m.authorName || formatId(m.author)}</div>
+                    )}
                     {isMedia ? (
                       <MediaView message={m} onOpenImage={onOpenImage} />
                     ) : (

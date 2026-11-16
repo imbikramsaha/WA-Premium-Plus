@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { describeRule, nextOccurrence } from '../../../shared/schedule';
+import { describeRule, firstOccurrence, nextOccurrence } from '../../../shared/schedule';
 import type { AttachmentInfo, ChatSummary, Repeat, RepeatRule, ScheduleTarget } from '../../../shared/types';
 import { errorMessage, formatBytes, formatDateTime, formatTime, fromLocalInputValue, toLocalInputValue } from '../format';
 import { Avatar } from './Avatar';
@@ -113,8 +113,9 @@ export function ScheduleDialog({
 
   const preview = useMemo(() => {
     if (Number.isNaN(sendAt)) return [];
-    const times = [sendAt];
-    let after = sendAt;
+    const first = firstOccurrence(sendAt, rule);
+    const times = [first];
+    let after = first;
     while (times.length < 4 && rule.repeat !== 'none') {
       const next = nextOccurrence(sendAt, rule, after);
       if (next === null) break;

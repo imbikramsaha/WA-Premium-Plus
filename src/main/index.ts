@@ -151,6 +151,7 @@ function main(): void {
     mediaDir,
     tempDir: join(app.getPath('temp'), 'wa-premium-plus'),
     store,
+    offline: process.env.WAPP_OFFLINE === '1',
     emit: (event) => {
       send(event);
       if (event.type === 'connection' && event.state.status === 'open') scheduler?.poke();

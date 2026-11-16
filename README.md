@@ -126,6 +126,7 @@ Environment variables for development:
 
 - `WAPP_DATA_DIR=/some/folder` uses a separate profile, for example to test with a second WhatsApp account.
 - `WAPP_LOG_LEVEL=debug` prints WhatsApp connection logs.
+- `WAPP_OFFLINE=1` shows the stored chats without connecting to WhatsApp. Combined with `WAPP_DATA_DIR` pointing at a copy of a profile (without its `auth` folder), this lets you test the window against real data without disturbing that account's session.
 
 Project layout:
 

@@ -111,7 +111,10 @@ export interface NewSchedule {
   target: ScheduleTarget;
   chatId: string;
   body: string;
+  /** First send time. */
   sendAt: number;
+  /** The time repeats are counted from; defaults to sendAt. */
+  anchorAt?: number;
   rule: RepeatRule;
   attachment?: Attachment | null;
 }
@@ -349,7 +352,7 @@ export class Store {
   listChats(limit = 5000): ChatSummary[] {
     const rows = this.db
       .prepare(
-        `SELECT c.id, ${NAME_SQL} AS name, c.unread_count,
+        `SELECT c.id, ${NAME_SQL} AS name, c.unread_count, c.last_activity,
                 m.body, m.kind, m.from_me, m.timestamp
          FROM chats c
          LEFT JOIN contacts ct ON ct.id = c.id
@@ -363,6 +366,7 @@ export class Store {
       id: string;
       name: string | null;
       unread_count: number;
+      last_activity: number;
       body: string | null;
       kind: MessageKind | null;
       from_me: number | null;
@@ -373,6 +377,7 @@ export class Store {
       name: r.name || fallbackName(r.id),
       isGroup: r.id.endsWith('@g.us'),
       unreadCount: r.unread_count,
+      lastActivity: r.last_activity || undefined,
       lastMessage:
         r.timestamp === null
           ? undefined
@@ -392,6 +397,7 @@ export class Store {
          ON CONFLICT(chat_id, id) DO UPDATE SET
            body = CASE WHEN messages.kind = 'deleted' THEN messages.body ELSE excluded.body END,
            kind = CASE WHEN messages.kind = 'deleted' THEN messages.kind ELSE excluded.kind END,
+           author = COALESCE(messages.author, excluded.author),
            author_name = COALESCE(excluded.author_name, messages.author_name),
            ack = COALESCE(excluded.ack, messages.ack),
            raw = COALESCE(excluded.raw, messages.raw),
@@ -532,6 +538,15 @@ export class Store {
     return row.n;
   }
 
+  /** Incoming group messages whose sender we don't know (synced before senders were read). */
+  countMissingAuthors(chatId: string): number {
+    if (!chatId.endsWith('@g.us')) return 0;
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND from_me = 0 AND author IS NULL')
+      .get(chatId) as { n: number };
+    return row.n;
+  }
+
   /** The newest message in a chat, as a WhatsApp message key (for history requests). */
   newestMessage(chatId: string): { id: string; fromMe: boolean; author?: string; timestamp: number } | undefined {
     const row = this.db
@@ -595,7 +610,7 @@ export class Store {
         input.target,
         input.chatId,
         input.body,
-        input.sendAt,
+        input.anchorAt ?? input.sendAt,
         input.sendAt,
         input.rule.repeat,
         JSON.stringify(input.rule),
@@ -626,7 +641,7 @@ export class Store {
       input.target,
       input.chatId,
       input.body,
-      input.sendAt,
+      input.anchorAt ?? input.sendAt,
       input.sendAt,
       input.rule.repeat,
       JSON.stringify(input.rule),

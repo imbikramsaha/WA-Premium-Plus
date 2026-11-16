@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { describeRule, nextOccurrence, normalizeRule } from '../src/shared/schedule.ts';
+import { describeRule, firstOccurrence, nextOccurrence, normalizeRule } from '../src/shared/schedule.ts';
 import type { RepeatRule } from '../src/shared/types.ts';
 import { Scheduler } from '../src/main/scheduler.ts';
 import { Store, type DueMessage } from '../src/main/store.ts';
@@ -87,6 +87,22 @@ describe('nextOccurrence', () => {
     const rule: RepeatRule = { repeat: 'daily', endAt: at(2026, 1, 2, 23, 59) };
     assert.equal(nextOccurrence(anchor, rule, anchor), at(2026, 1, 2));
     assert.equal(nextOccurrence(anchor, rule, at(2026, 1, 2)), null);
+  });
+});
+
+describe('firstOccurrence', () => {
+  it('keeps the chosen time when the rule allows that day', () => {
+    const monday = at(2026, 11, 16);
+    assert.equal(firstOccurrence(monday, { repeat: 'weekdays' }), monday);
+    assert.equal(firstOccurrence(monday, { repeat: 'daily' }), monday);
+  });
+
+  it('moves to the next allowed day otherwise', () => {
+    const tuesday = at(2026, 11, 17);
+    const rule: RepeatRule = { repeat: 'custom', interval: 1, unit: 'week', weekdays: [1, 3] };
+    assert.equal(firstOccurrence(tuesday, rule), at(2026, 11, 18)); // Wednesday
+    const saturday = at(2026, 11, 21);
+    assert.equal(firstOccurrence(saturday, { repeat: 'weekdays' }), at(2026, 11, 23)); // Monday
   });
 });
 
