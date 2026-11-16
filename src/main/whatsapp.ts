@@ -1,12 +1,16 @@
 // Manages the WhatsApp connection (via Baileys, the library behind WAHA's NOWEB engine)
 // and keeps the local store in sync with it.
 
+import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import makeWASocket, {
   BufferJSON,
+  decryptPollVote,
   DisconnectReason,
   downloadMediaMessage,
+  generateWAMessageFromContent,
   fetchLatestBaileysVersion,
   fetchLatestWaWebVersion,
   getContentType,
@@ -22,22 +26,59 @@ import makeWASocket, {
   type Chat,
   type ConnectionState as BaileysConnectionState,
   type Contact,
+  type MiscMessageGenerationOptions,
+  type WACallEvent,
   type WAMessage,
+  type WAMessageKey,
   type WASocket,
 } from 'baileys';
 import pino from 'pino';
 import QRCode from 'qrcode';
-import type { AppEvent, ChatMessage, ConnectionState, GroupAction, GroupInfo } from '../shared/types';
+import type {
+  AppEvent,
+  ChannelInfo,
+  ChatAction,
+  ChatMessage,
+  ConnectionState,
+  GroupAction,
+  GroupInfo,
+  RichContent,
+} from '../shared/types';
 import { PermanentError } from './errors';
 import { describeFile, mediaFileName, writeTempFile } from './media';
-import { parseMessage, reviveMessage, toAck } from './messages';
+import { buildVcard, encryptPollVote, optionsFromHashes, parseMessage, pollOptionHash, reviveMessage, toAck } from './messages';
 import { webmOpusToOgg } from './opus-ogg';
-import { fallbackName, type Attachment, type DueMessage, type Store } from './store';
+import { fallbackName, ME, STATUS_CHAT, type Attachment, type DueMessage, type Store } from './store';
+
+/** A call, as reported live by WhatsApp. */
+export interface IncomingCall {
+  id: string;
+  /** Who is calling (for group calls, the group). */
+  chatId: string;
+  /** The caller's ID as WhatsApp sent it (needed to reject the call). */
+  from: string;
+  isVideo: boolean;
+  isGroup: boolean;
+}
+
+/** Events for the app's own features (automation, webhooks, reminders). */
+export interface WhatsAppEvents {
+  /** A message was stored. `live` is false for history sync. */
+  message: [message: ChatMessage, info: { live: boolean; notify: boolean }];
+  /** Someone is calling. */
+  call: [call: IncomingCall];
+  /** People joined or left a group. */
+  'group-participants': [update: { groupId: string; participants: string[]; action: string }];
+}
 
 export interface WhatsAppOptions {
   authDir: string;
   /** Where downloaded and sent media files are kept. */
   mediaDir: string;
+  /** Where profile pictures are kept. */
+  avatarsDir: string;
+  /** Turns a stored profile picture file name into a URL the window can load. */
+  avatarUrl: (fileName: string) => string;
   /** Scratch space for pasted files and voice notes. */
   tempDir: string;
   store: Store;
@@ -54,6 +95,14 @@ export interface WhatsAppOptions {
 const logger = pino({ level: process.env.WAPP_LOG_LEVEL ?? 'silent' });
 const SENT_CACHE_LIMIT = 500;
 const LID_BATCH = 500;
+/** WhatsApp lets you forward a message to at most 5 chats at once. */
+const MAX_FORWARD = 5;
+const MAX_PINNED = 3;
+const AVATAR_FRESH_MS = 3 * 24 * 60 * 60 * 1000;
+const NO_AVATAR_FRESH_MS = 24 * 60 * 60 * 1000;
+const AVATAR_CONCURRENCY = 2;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type WaVersion = [number, number, number];
 
@@ -107,7 +156,7 @@ function fileContent(path: string, info: Attachment | Awaited<ReturnType<typeof 
   }
 }
 
-export class WhatsApp {
+export class WhatsApp extends EventEmitter<WhatsAppEvents> {
   private sock: WASocket | null = null;
   private state: ConnectionState = { status: 'connecting', linked: false };
   private reconnectTimer: NodeJS.Timeout | undefined;
@@ -119,9 +168,13 @@ export class WhatsApp {
   private readonly downloads = new Map<string, Promise<string>>();
   /** Chats we already asked the phone to re-send this session. */
   private readonly historyRequested = new Set<string>();
+  private readonly avatarQueue: string[] = [];
+  private readonly avatarQueued = new Set<string>();
+  private avatarsActive = 0;
   private readonly opts: WhatsAppOptions;
 
   constructor(opts: WhatsAppOptions) {
+    super();
     this.opts = opts;
   }
 
@@ -131,6 +184,11 @@ export class WhatsApp {
 
   get isOpen(): boolean {
     return this.state.status === 'open';
+  }
+
+  /** Sends an event to the window on behalf of this account. */
+  emitLocal(event: AppEvent): void {
+    this.opts.emit(event);
   }
 
   async start(): Promise<void> {
@@ -158,9 +216,14 @@ export class WhatsApp {
 
   // --- Sending ---
 
-  private async send(chatId: string, content: AnyMessageContent, localCopy?: string): Promise<void> {
-    const sent = await this.requireSocket().sendMessage(chatId, content);
-    if (!sent) return;
+  private async send(
+    chatId: string,
+    content: AnyMessageContent,
+    localCopy?: string,
+    options?: MiscMessageGenerationOptions,
+  ): Promise<string | undefined> {
+    const sent = await this.requireSocket().sendMessage(chatId, content, options);
+    if (!sent) return undefined;
     if (sent.key.id && sent.message) this.rememberSent(sent.key.id, sent.message);
     if (localCopy && sent.key.id) {
       // Keep a copy of what we sent so it shows without downloading it again.
@@ -175,10 +238,191 @@ export class WhatsApp {
       }
     }
     this.handleMessages([sent], 'append');
+    return sent.key.id ?? undefined;
   }
 
-  async sendText(chatId: string, text: string): Promise<void> {
-    await this.send(chatId, { text });
+  /** A stored message as a WhatsApp message, for quoting or forwarding it. */
+  private waMessageFor(chatId: string, messageId: string): WAMessage {
+    const stored = this.opts.store.getMessage(chatId, messageId);
+    if (!stored) throw new Error("This message isn't available on this computer.");
+    if (stored.raw) return reviveMessage(stored.raw);
+    return {
+      key: { remoteJid: chatId, id: stored.id, fromMe: stored.fromMe, participant: stored.author },
+      message: { conversation: stored.body },
+      messageTimestamp: stored.timestamp,
+    };
+  }
+
+  private keyFor(chatId: string, messageId: string): WAMessageKey {
+    const stored = this.opts.store.getMessage(chatId, messageId);
+    if (!stored) throw new Error("This message isn't available on this computer.");
+    if (stored.raw) return reviveMessage(stored.raw).key;
+    return { remoteJid: chatId, id: stored.id, fromMe: stored.fromMe, participant: stored.author };
+  }
+
+  private quoteOptions(chatId: string, quotedId?: string): MiscMessageGenerationOptions | undefined {
+    return quotedId ? { quoted: this.waMessageFor(chatId, quotedId) } : undefined;
+  }
+
+  async sendText(chatId: string, text: string, quotedId?: string): Promise<string | undefined> {
+    return this.send(chatId, { text }, undefined, this.quoteOptions(chatId, quotedId));
+  }
+
+  /** Sends a poll, a location or contact cards. */
+  async sendRich(chatId: string, content: RichContent, quotedId?: string): Promise<void> {
+    let message: AnyMessageContent;
+    switch (content.type) {
+      case 'poll':
+        message = {
+          poll: { name: content.question, values: content.options, selectableCount: content.multiple ? 0 : 1 },
+        };
+        break;
+      case 'location':
+        message = {
+          location: {
+            degreesLatitude: content.lat,
+            degreesLongitude: content.lng,
+            name: content.name || undefined,
+            address: content.address || undefined,
+          },
+        };
+        break;
+      case 'contacts':
+        message = {
+          contacts: {
+            displayName: content.contacts.length === 1 ? content.contacts[0]!.name : `${content.contacts.length} contacts`,
+            contacts: content.contacts.map((c) => ({ displayName: c.name, vcard: buildVcard(c) })),
+          },
+        };
+        break;
+    }
+    await this.send(chatId, message, undefined, this.quoteOptions(chatId, quotedId));
+  }
+
+  /** Reacts to a message; an empty emoji removes our reaction. */
+  async react(chatId: string, messageId: string, emoji: string): Promise<void> {
+    const key = this.keyFor(chatId, messageId);
+    await this.requireSocket().sendMessage(chatId, { react: { text: emoji, key } });
+    this.opts.store.setReaction(chatId, messageId, ME, emoji, Date.now());
+    this.emitStored(this.opts.store.getMessage(chatId, messageId));
+  }
+
+  async forward(chatId: string, messageId: string, targets: string[]): Promise<void> {
+    if (targets.length === 0) throw new Error('Choose a chat to forward to.');
+    if (targets.length > MAX_FORWARD) throw new Error(`You can forward to up to ${MAX_FORWARD} chats at once.`);
+    const stored = this.opts.store.getMessage(chatId, messageId);
+    if (!stored) throw new Error("This message isn't available on this computer.");
+    const localFile = this.opts.store.getLocalFile(chatId, messageId);
+    for (const [i, target] of targets.entries()) {
+      if (i > 0) await sleep(700);
+      if (stored.media && !stored.raw && localFile) {
+        // We can't forward without the media keys, but we have the file: send it again.
+        await this.sendFile(target, join(this.opts.mediaDir, localFile), stored.body, stored.media.fileName, stored.media.mimetype);
+      } else {
+        await this.send(target, { forward: this.waMessageFor(chatId, messageId) });
+      }
+    }
+  }
+
+  /** Edits one of our own text messages (WhatsApp allows this for 15 minutes). */
+  async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
+    const stored = this.opts.store.getMessage(chatId, messageId);
+    if (!stored?.fromMe) throw new Error('You can only edit your own messages.');
+    await this.requireSocket().sendMessage(chatId, { text, edit: this.keyFor(chatId, messageId) });
+    this.emitStored(this.opts.store.editMessage(chatId, messageId, text));
+  }
+
+  async deleteMessage(chatId: string, messageId: string, forEveryone: boolean): Promise<void> {
+    const sock = this.requireSocket();
+    const key = this.keyFor(chatId, messageId);
+    const stored = this.opts.store.getMessage(chatId, messageId);
+    if (forEveryone) {
+      await sock.sendMessage(chatId, { delete: key });
+      this.emitStored(this.opts.store.markDeleted(chatId, messageId));
+      return;
+    }
+    await sock.chatModify(
+      { deleteForMe: { deleteMedia: true, key, timestamp: stored?.timestamp ?? Math.floor(Date.now() / 1000) } },
+      chatId,
+    );
+    const file = this.opts.store.removeMessage(chatId, messageId);
+    if (file) await rm(join(this.opts.mediaDir, file), { force: true });
+    this.opts.emit({ type: 'chats-changed' });
+  }
+
+  /** IDs the poll's creator and we (the voter) use for encrypting votes in this poll. */
+  private pollIds(sock: WASocket, pollKey: WAMessageKey): { creator: string; me: string } {
+    const lidMode = (pollKey.participant ?? pollKey.remoteJid ?? '').endsWith('@lid');
+    const mePn = jidNormalizedUser(sock.user?.id);
+    const meLid = sock.user?.lid ? jidNormalizedUser(sock.user.lid) : mePn;
+    const me = lidMode ? meLid : mePn;
+    const creator = pollKey.fromMe ? me : jidNormalizedUser(pollKey.participant || pollKey.remoteJid || '');
+    return { creator, me };
+  }
+
+  async votePoll(chatId: string, messageId: string, options: string[]): Promise<void> {
+    const sock = this.requireSocket();
+    const stored = this.opts.store.getMessage(chatId, messageId);
+    const poll = stored?.extra?.poll;
+    if (!stored?.raw || !poll) throw new Error("This poll can't be answered from this computer. Use your phone.");
+    if (poll.selectableCount === 1 && options.length > 1) throw new Error('Pick one option.');
+    const raw = reviveMessage(stored.raw);
+    const secret = raw.message?.messageContextInfo?.messageSecret;
+    if (!secret?.length) throw new Error("This poll can't be answered from this computer. Use your phone.");
+    const { creator, me } = this.pollIds(sock, raw.key);
+    const vote = encryptPollVote(
+      options.map((o) => Buffer.from(pollOptionHash(o), 'hex')),
+      { pollEncKey: secret, pollCreatorJid: creator, pollMsgId: messageId, voterJid: me },
+    );
+    const msg = generateWAMessageFromContent(
+      chatId,
+      { pollUpdateMessage: { pollCreationMessageKey: raw.key, vote, senderTimestampMs: Date.now() } },
+      { userJid: sock.user!.id },
+    );
+    await sock.relayMessage(chatId, msg.message!, {
+      messageId: msg.key.id!,
+      additionalNodes: [{ tag: 'meta', attrs: { polltype: 'vote' } }],
+    });
+    this.opts.store.setPollVote(chatId, messageId, ME, options, Date.now());
+    this.emitStored(this.opts.store.getMessage(chatId, messageId));
+  }
+
+  /** Decrypts and records a poll vote. Tries both ID styles, since WhatsApp uses either. */
+  private applyPollVote(parsed: Extract<ReturnType<typeof parseMessage>, { type: 'pollVote' }>): void {
+    const { store } = this.opts;
+    const stored = store.getMessage(parsed.chatId, parsed.targetId);
+    const poll = stored?.extra?.poll;
+    if (!stored?.raw || !poll) return;
+    const raw = reviveMessage(stored.raw);
+    const secret = raw.message?.messageContextInfo?.messageSecret;
+    const sock = this.sock;
+    if (!secret?.length || !sock || !parsed.vote.encPayload || !parsed.vote.encIv) return;
+    const meIds = [jidNormalizedUser(sock.user?.id), sock.user?.lid ? jidNormalizedUser(sock.user.lid) : undefined].filter(
+      (id): id is string => Boolean(id),
+    );
+    const idsFor = (key: WAMessageKey) =>
+      key.fromMe
+        ? meIds
+        : [key.participant, (key as { participantAlt?: string }).participantAlt, key.remoteJid, (key as { remoteJidAlt?: string }).remoteJidAlt]
+            .filter((id): id is string => Boolean(id) && !id!.endsWith('@g.us'))
+            .map((id) => jidNormalizedUser(id));
+    for (const creator of idsFor(raw.key)) {
+      for (const voter of idsFor(parsed.voteKey)) {
+        try {
+          const vote = decryptPollVote(
+            { encPayload: parsed.vote.encPayload, encIv: parsed.vote.encIv },
+            { pollEncKey: secret, pollCreatorJid: creator, pollMsgId: parsed.targetId, voterJid: voter },
+          );
+          const picked = optionsFromHashes(poll.options, vote.selectedOptions ?? []);
+          const who = parsed.voteKey.fromMe ? ME : this.resolveJid(voter);
+          store.setPollVote(parsed.chatId, parsed.targetId, who, picked, parsed.timestamp);
+          this.emitStored(store.getMessage(parsed.chatId, parsed.targetId));
+          return;
+        } catch {
+          // wrong ID combination; try the next
+        }
+      }
+    }
   }
 
   async sendFile(chatId: string, path: string, caption?: string, name?: string, mimetype?: string): Promise<void> {
@@ -233,16 +477,127 @@ export class WhatsApp {
   }
 
   /** Posts to the user's status, visible to their saved contacts (WhatsApp's "My contacts"). */
-  private async postStatus(content: AnyMessageContent, isMedia: boolean): Promise<void> {
+  private async postStatus(content: AnyMessageContent, isMedia: boolean, backgroundColor = '#047857'): Promise<void> {
     const sock = this.requireSocket();
     const me = this.state.me?.id;
     const audience = [...new Set([...this.opts.store.statusAudience(), ...(me ? [me] : [])])];
     if (audience.length === 0) throw new Error('No saved contacts to share the status with.');
-    await sock.sendMessage('status@broadcast', content, {
+    const sent = await sock.sendMessage(STATUS_CHAT, content, {
       statusJidList: audience,
       broadcast: true,
-      ...(isMedia ? {} : { backgroundColor: '#047857', font: 1 }),
+      ...(isMedia ? {} : { backgroundColor, font: 1 }),
     });
+    if (sent) this.applyMessage(sent, true);
+  }
+
+  /** Posts a status update now: text (with a background colour), or a photo or video with a caption. */
+  async postStatusNow(text: string, file?: { path: string; name?: string; mimetype?: string }, backgroundColor?: string): Promise<void> {
+    if (file) {
+      const info = await describeFile(file.path, file.name, file.mimetype);
+      if (info.kind !== 'image' && info.kind !== 'video') throw new Error('A status can include a photo or a video.');
+      await this.postStatus(fileContent(file.path, info, text), true);
+      return;
+    }
+    if (!text.trim()) throw new Error('Write something for your status.');
+    await this.postStatus({ text }, false, backgroundColor);
+  }
+
+  /** Tells the author we've seen their status, like the phone does when you view it. */
+  async markStatusViewed(messageId: string, author: string): Promise<void> {
+    const sock = this.sock;
+    if (!sock || !this.isOpen) return;
+    await sock.readMessages([{ remoteJid: STATUS_CHAT, id: messageId, participant: author, fromMe: false }]).catch(() => undefined);
+  }
+
+  // --- Channels ---
+
+  /** Follows a channel from its invite link (https://whatsapp.com/channel/...). */
+  async followChannel(link: string): Promise<string> {
+    const sock = this.requireSocket();
+    const code = /channel\/([\w-]+)/.exec(link)?.[1] ?? (/^[\w-]{10,}$/.test(link.trim()) ? link.trim() : undefined);
+    if (!code) throw new Error('Paste a channel link, like https://whatsapp.com/channel/…');
+    const meta = await sock.newsletterMetadata('invite', code);
+    if (!meta) throw new Error("Couldn't find that channel.");
+    await sock.newsletterFollow(meta.id);
+    this.opts.store.upsertChat({ id: meta.id, name: meta.thread_metadata?.name ?? meta.name, lastActivity: Math.floor(Date.now() / 1000) });
+    this.opts.emit({ type: 'chats-changed' });
+    return meta.id;
+  }
+
+  async unfollowChannel(id: string): Promise<void> {
+    await this.requireSocket().newsletterUnfollow(id);
+    this.opts.store.deleteChat(id);
+    this.opts.emit({ type: 'chats-changed' });
+  }
+
+  async getChannelInfo(id: string): Promise<ChannelInfo> {
+    const meta = await this.requireSocket().newsletterMetadata('jid', id);
+    if (!meta) throw new Error("Couldn't load this channel.");
+    const name = meta.thread_metadata?.name ?? meta.name;
+    if (name) this.opts.store.upsertChat({ id, name });
+    return {
+      id,
+      name: name || 'Channel',
+      description: meta.thread_metadata?.description ?? meta.description ?? undefined,
+      subscribers: meta.subscribers ?? undefined,
+      verified: meta.verification === 'VERIFIED',
+      link: meta.invite ? `https://whatsapp.com/channel/${meta.invite}` : undefined,
+      muted: meta.mute_state === 'ON',
+      createdAt: meta.creation_time ?? meta.thread_metadata?.creation_time ?? undefined,
+    };
+  }
+
+  async muteChannel(id: string, muted: boolean): Promise<void> {
+    const sock = this.requireSocket();
+    if (muted) await sock.newsletterMute(id);
+    else await sock.newsletterUnmute(id);
+    this.opts.store.upsertChat({ id, mutedUntil: muted ? -1 : 0 });
+    this.opts.emit({ type: 'chats-changed' });
+  }
+
+  // --- Group admin ---
+
+  /** Adds, removes, promotes or demotes members. Returns a problem per person, if any. */
+  async updateMembers(
+    groupId: string,
+    ids: string[],
+    action: 'add' | 'remove' | 'promote' | 'demote',
+  ): Promise<Array<{ id: string; problem: string }>> {
+    const sock = this.requireSocket();
+    if (ids.length === 0) return [];
+    const results = await sock.groupParticipantsUpdate(groupId, ids, action);
+    const problems: Array<{ id: string; problem: string }> = [];
+    for (const r of results) {
+      const status = String(r.status);
+      if (status === '200') continue;
+      const id = this.resolveJid(r.jid ?? '');
+      const problem =
+        status === '403'
+          ? "Their privacy settings don't allow being added. Send them the invite link instead."
+          : status === '408'
+            ? 'They left recently and can only rejoin with the invite link.'
+            : status === '409'
+              ? 'Already in the group.'
+              : status === '401'
+                ? 'They blocked you.'
+                : `WhatsApp refused (${status}).`;
+      problems.push({ id, problem });
+    }
+    return problems;
+  }
+
+  async createGroup(subject: string, members: string[]): Promise<string> {
+    const name = subject.trim();
+    if (!name) throw new Error('Give the group a name.');
+    if (name.length > 100) throw new Error('Group names can be up to 100 characters.');
+    const meta = await this.requireSocket().groupCreate(name, members);
+    this.opts.store.upsertChat({ id: meta.id, name: meta.subject, lastActivity: Math.floor(Date.now() / 1000) });
+    this.opts.emit({ type: 'chats-changed' });
+    return meta.id;
+  }
+
+  async leaveGroup(groupId: string): Promise<void> {
+    await this.requireSocket().groupLeave(groupId);
   }
 
   // --- Media ---
@@ -334,6 +689,195 @@ export class WhatsApp {
       .latestIncoming(chatId, Math.min(unread, 50))
       .map((m) => ({ remoteJid: chatId, id: m.id, participant: m.author, fromMe: false }));
     await sock.readMessages(keys).catch(() => undefined);
+  }
+
+  /** Archives, pins, mutes, marks unread or deletes a chat, on the phone too. */
+  async chatAction(chatId: string, action: ChatAction): Promise<void> {
+    const sock = this.requireSocket();
+    const { store, emit } = this.opts;
+    const last = store.newestMessage(chatId);
+    const lastMessages = last
+      ? [
+          {
+            key: { remoteJid: chatId, id: last.id, fromMe: last.fromMe, participant: last.author },
+            messageTimestamp: last.timestamp,
+          },
+        ]
+      : [];
+    switch (action.type) {
+      case 'archive':
+        await sock.chatModify({ archive: action.value, lastMessages }, chatId);
+        // WhatsApp unpins chats when they're archived.
+        store.upsertChat({ id: chatId, archived: action.value, ...(action.value ? { pinned: 0 } : {}) });
+        break;
+      case 'pin': {
+        if (action.value && store.listChats().filter((c) => c.pinned).length >= MAX_PINNED) {
+          throw new Error(`You can pin up to ${MAX_PINNED} chats.`);
+        }
+        await sock.chatModify({ pin: action.value }, chatId);
+        store.upsertChat({ id: chatId, pinned: action.value ? Date.now() : 0 });
+        break;
+      }
+      case 'mute':
+        await sock.chatModify({ mute: action.until === 0 ? null : action.until }, chatId);
+        store.upsertChat({ id: chatId, mutedUntil: action.until });
+        break;
+      case 'markUnread':
+        await sock.chatModify({ markRead: false, lastMessages }, chatId);
+        store.upsertChat({ id: chatId, unreadCount: Math.max(1, store.unreadCount(chatId)) });
+        break;
+      case 'delete':
+        await sock.chatModify({ delete: true, lastMessages }, chatId);
+        store.deleteChat(chatId);
+        break;
+    }
+    emit({ type: 'chats-changed' });
+  }
+
+  /** Which of these phone numbers use WhatsApp. */
+  async checkNumbers(phones: string[]): Promise<Array<{ phone: string; jid?: string }>> {
+    const sock = this.requireSocket();
+    const results: Array<{ phone: string; jid?: string }> = [];
+    for (let i = 0; i < phones.length; i += 50) {
+      const batch = phones.slice(i, i + 50);
+      const found = (await sock.onWhatsApp(...batch)) ?? [];
+      const byNumber = new Map(found.filter((f) => f.exists).map((f) => [f.jid.split('@')[0]!, f.jid]));
+      for (const phone of batch) {
+        const digits = phone.replace(/\D/g, '');
+        results.push({ phone, jid: byNumber.get(digits) ? jidNormalizedUser(byNumber.get(digits)) : undefined });
+      }
+      if (i + 50 < phones.length) await sleep(1_000);
+    }
+    return results;
+  }
+
+  /**
+   * Links by phone number instead of a QR code. WhatsApp shows a notification on that phone;
+   * the user types the returned code there.
+   */
+  async requestPairingCode(phone: string): Promise<string> {
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 7 || digits.length > 15) throw new Error('Enter your full phone number with the country code.');
+    const sock = this.sock;
+    if (!sock || this.state.linked) throw new Error('Wait for the QR code to appear, then try again.');
+    const code = await sock.requestPairingCode(digits);
+    const pretty = code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+    this.opts.emit({ type: 'pairing-code', code: pretty });
+    return pretty;
+  }
+
+  /** Rejects an incoming call. */
+  async rejectCall(callId: string, from: string): Promise<void> {
+    await this.requireSocket().rejectCall(callId, from);
+    const known = this.opts.store.getCall(callId);
+    if (known) {
+      this.opts.store.upsertCall({ id: callId, chatId: '', status: 'auto-rejected', startedAt: known.startedAt });
+      this.opts.emit({ type: 'calls-changed' });
+    }
+  }
+
+  // --- Profile pictures ---
+
+  /**
+   * The cached profile picture URL, or null if there's none. Fetches it in the background
+   * when it's missing or old, and sends an 'avatar' event when it changes.
+   */
+  getAvatar(id: string): string | null {
+    const cached = this.opts.store.getProfilePic(id);
+    const maxAge = cached?.file ? AVATAR_FRESH_MS : NO_AVATAR_FRESH_MS;
+    if (!cached || Date.now() - cached.fetchedAt > maxAge) this.queueAvatar(id);
+    return cached?.file ? this.opts.avatarUrl(cached.file) : null;
+  }
+
+  private queueAvatar(id: string): void {
+    if (this.avatarQueued.has(id) || !this.sock || !this.isOpen) return;
+    if (!/@(s\.whatsapp\.net|g\.us|lid|newsletter)$/.test(id)) return;
+    this.avatarQueued.add(id);
+    this.avatarQueue.push(id);
+    this.pumpAvatars();
+  }
+
+  private pumpAvatars(): void {
+    while (this.avatarsActive < AVATAR_CONCURRENCY && this.avatarQueue.length > 0) {
+      const id = this.avatarQueue.shift()!;
+      this.avatarsActive++;
+      void this.fetchAvatar(id).finally(() => {
+        this.avatarsActive--;
+        this.avatarQueued.delete(id);
+        setTimeout(() => this.pumpAvatars(), 120);
+      });
+    }
+  }
+
+  private async fetchAvatar(id: string): Promise<void> {
+    const sock = this.sock;
+    const { store, avatarsDir, emit } = this.opts;
+    if (!sock || !this.isOpen) return;
+    let url: string | undefined;
+    try {
+      url = id.endsWith('@newsletter')
+        ? await this.channelPictureUrl(sock, id)
+        : await sock.profilePictureUrl(id, 'preview', 10_000);
+    } catch (err) {
+      // 401/403/404: no picture, or hidden by their privacy settings. Anything else: try later.
+      const status = httpStatusOf(err);
+      if (status !== 401 && status !== 403 && status !== 404) return;
+    }
+    const previous = store.getProfilePic(id)?.file ?? null;
+    let file: string | null = null;
+    if (url) {
+      const res = await fetch(url).catch(() => null);
+      if (!res?.ok) return;
+      file = `${createHash('sha1').update(id).digest('hex').slice(0, 20)}-${Date.now().toString(36)}.jpg`;
+      await mkdir(avatarsDir, { recursive: true });
+      await writeFile(join(avatarsDir, file), Buffer.from(await res.arrayBuffer()));
+    }
+    store.setProfilePic(id, file);
+    if (previous && previous !== file) await rm(join(avatarsDir, previous), { force: true });
+    if (previous !== file) emit({ type: 'avatar', id, url: file ? this.opts.avatarUrl(file) : null });
+  }
+
+  private async channelPictureUrl(sock: WASocket, id: string): Promise<string | undefined> {
+    const meta = await sock.newsletterMetadata('jid', id);
+    const path = meta?.picture?.directPath;
+    return path ? getUrlFromDirectPath(path) : meta?.picture?.url;
+  }
+
+  // --- Calls ---
+
+  private onCall(call: WACallEvent): void {
+    const { store, emit } = this.opts;
+    const isGroup = Boolean(call.isGroup && call.groupJid);
+    const caller = this.resolveJid(call.from, call.callerPn);
+    const chatId = isGroup ? call.groupJid! : caller;
+    const fromMe = this.myIds(this.sock!).has(jidNormalizedUser(call.from)) || caller === this.state.me?.id;
+    const startedAt = call.date ? new Date(call.date).getTime() : Date.now();
+    const known = store.getCall(call.id);
+    switch (call.status) {
+      case 'offer':
+        if (known) return;
+        store.upsertCall({ id: call.id, chatId, fromMe, isVideo: call.isVideo, isGroup, status: fromMe ? 'outgoing' : 'missed', startedAt });
+        if (!fromMe && !call.offline) {
+          this.emit('call', { id: call.id, chatId, from: call.from, isVideo: Boolean(call.isVideo), isGroup });
+        }
+        break;
+      case 'accept':
+        store.upsertCall({ id: call.id, chatId, fromMe, isGroup, status: fromMe ? 'outgoing' : 'answered', startedAt: known?.startedAt ?? startedAt });
+        break;
+      case 'reject':
+        store.upsertCall({ id: call.id, chatId, fromMe, isGroup, status: fromMe ? 'outgoing' : 'rejected', startedAt: known?.startedAt ?? startedAt });
+        break;
+      case 'timeout':
+        store.upsertCall({ id: call.id, chatId, fromMe, isGroup, status: fromMe ? 'outgoing' : 'missed', startedAt: known?.startedAt ?? startedAt });
+        break;
+      case 'terminate':
+        if (!known) return;
+        store.upsertCall({ id: call.id, chatId, status: known.status, startedAt: known.startedAt, endedAt: Date.now() });
+        break;
+      default:
+        return;
+    }
+    emit({ type: 'calls-changed' });
   }
 
   /** IDs the linked account appears under (phone number and privacy ID). */
@@ -437,14 +981,14 @@ export class WhatsApp {
   // --- Account ---
 
   /** Unlinks this computer from the WhatsApp account and removes local data. */
-  async logout(): Promise<void> {
+  async logout({ restart = true }: { restart?: boolean } = {}): Promise<void> {
     this.stopped = true;
     clearTimeout(this.reconnectTimer);
     const sock = this.sock;
     this.sock = null;
     if (sock) await sock.logout().catch(() => undefined);
     await this.resetAccount();
-    await this.start();
+    if (restart) await this.start();
   }
 
   private setState(state: ConnectionState): void {
@@ -463,6 +1007,7 @@ export class WhatsApp {
   private async resetAccount(): Promise<void> {
     await rm(this.opts.authDir, { recursive: true, force: true });
     await rm(this.opts.mediaDir, { recursive: true, force: true });
+    await rm(this.opts.avatarsDir, { recursive: true, force: true });
     this.opts.store.clearAll();
     this.sentCache.clear();
     this.opts.emit({ type: 'chats-changed' });
@@ -492,7 +1037,15 @@ export class WhatsApp {
       browser: ['WA Premium Plus', 'Chrome', '1.0.0'],
       // Stay "offline" so the phone keeps showing notifications.
       markOnlineOnConnect: false,
-      getMessage: async (key) => (key.id ? this.sentCache.get(key.id) : undefined),
+      // WhatsApp asks for a message again when a recipient couldn't decrypt it.
+      getMessage: async (key) => {
+        if (!key.id) return undefined;
+        const cached = this.sentCache.get(key.id);
+        if (cached) return cached;
+        if (!key.remoteJid) return undefined;
+        const stored = this.opts.store.getMessage(this.resolveJid(key.remoteJid), key.id);
+        return stored?.raw ? (reviveMessage(stored.raw).message ?? undefined) : undefined;
+      },
     });
     this.sock = sock;
 
@@ -530,10 +1083,53 @@ export class WhatsApp {
       emit({ type: 'chats-changed' });
     });
     sock.ev.on('contacts.upsert', (contacts) => current() && this.saveContacts(contacts, true));
-    sock.ev.on('contacts.update', (contacts) => current() && this.saveContacts(contacts, true));
+    sock.ev.on('contacts.update', (contacts) => {
+      if (!current()) return;
+      this.saveContacts(contacts, true);
+      // A changed or removed profile picture: fetch it again when it's next shown.
+      for (const c of contacts) {
+        if (!c.id || c.imgUrl === undefined) continue;
+        const id = this.resolveJid(c.id);
+        store.expireProfilePic(id);
+        this.queueAvatar(id);
+      }
+    });
     sock.ev.on('groups.update', (groups) => {
       if (!current()) return;
       for (const g of groups) if (g.id && g.subject) store.upsertChat({ id: g.id, name: g.subject });
+      emit({ type: 'chats-changed' });
+    });
+    sock.ev.on('group-participants.update', ({ id, participants, action }) => {
+      if (!current()) return;
+      const ids = participants
+        .map((p) => {
+          const pn = (p as { phoneNumber?: string }).phoneNumber;
+          return this.resolveJid(p.id, pn);
+        })
+        .filter(Boolean);
+      this.emit('group-participants', { groupId: id, participants: ids, action });
+    });
+    sock.ev.on('call', (calls) => {
+      if (!current()) return;
+      for (const call of calls) this.onCall(call);
+    });
+    sock.ev.on('labels.edit', (label) => {
+      if (!current()) return;
+      if (label.deleted) {
+        const id = store.labelIdForWa(label.id);
+        if (id) store.deleteLabel(id);
+      } else {
+        store.saveLabel({ name: label.name, color: label.color, waId: label.id });
+      }
+      emit({ type: 'labels-changed' });
+      emit({ type: 'chats-changed' });
+    });
+    sock.ev.on('labels.association', ({ association, type }) => {
+      if (!current() || !('chatId' in association) || !association.chatId) return;
+      const labelId = store.labelIdForWa(association.labelId);
+      if (!labelId) return;
+      store.setChatLabel(this.resolveJid(association.chatId), labelId, type === 'add');
+      emit({ type: 'labels-changed' });
       emit({ type: 'chats-changed' });
     });
     sock.ev.on('messages.upsert', ({ messages, type }) => {
@@ -674,10 +1270,43 @@ export class WhatsApp {
       if (emit) this.emitStored(deleted);
       return undefined;
     }
+    if (parsed.type === 'reaction') {
+      store.setReaction(parsed.chatId, parsed.targetId, parsed.sender, parsed.emoji, parsed.timestamp);
+      if (emit) this.emitStored(store.getMessage(parsed.chatId, parsed.targetId));
+      return undefined;
+    }
+    if (parsed.type === 'pollVote') {
+      this.applyPollVote(parsed);
+      return undefined;
+    }
     const { message, senderId, pushName } = parsed;
-    if (message.chatId === 'status@broadcast') return undefined;
     if (senderId && pushName) store.upsertContact({ id: senderId, notify: pushName });
+    if (message.chatId === STATUS_CHAT) {
+      // Status updates: keep them (they're shown for a day), but not our own text-only echoes.
+      if (!message.author && !message.fromMe) return undefined;
+      store.upsertMessage(message);
+      if (emit) this.opts.emit({ type: 'statuses-changed' });
+      return undefined;
+    }
     store.upsertMessage(message);
+    for (const r of parsed.reactions ?? []) store.setReaction(message.chatId, message.id, r.sender, r.emoji, r.timestamp);
+    const poll = message.extra?.poll;
+    for (const v of parsed.pollVotes ?? []) {
+      if (poll) store.setPollVote(message.chatId, message.id, v.voter, optionsFromHashes(poll.options, v.hashes), v.timestamp);
+    }
+    if (message.kind === 'call' && message.extra?.call) {
+      const call = message.extra.call;
+      store.upsertCall({
+        id: message.id,
+        chatId: message.chatId,
+        fromMe: message.fromMe,
+        isVideo: call.video,
+        isGroup: message.chatId.endsWith('@g.us'),
+        status: message.fromMe ? 'outgoing' : call.outcome === 'CONNECTED' ? 'answered' : call.outcome === 'REJECTED' ? 'rejected' : 'missed',
+        startedAt: message.timestamp * 1000,
+        endedAt: call.seconds ? message.timestamp * 1000 + call.seconds * 1000 : undefined,
+      });
+    }
     const stored = store.getMessage(message.chatId, message.id);
     if (emit) this.emitStored(stored);
     return stored;
@@ -687,11 +1316,18 @@ export class WhatsApp {
     const { store, emit, onIncoming } = this.opts;
     let changed = false;
     for (const raw of messages) {
+      const isNew = Boolean(raw.key.remoteJid && raw.key.id) && !store.getMessage(this.resolveJid(raw.key.remoteJid!, raw.key.remoteJidAlt), raw.key.id!);
       const message = this.applyMessage(raw, true);
       changed = true;
-      if (message && type === 'notify' && !message.fromMe) {
+      if (!message) continue;
+      const notify = type === 'notify';
+      if (notify && !message.fromMe) {
         store.incrementUnread(message.chatId);
-        onIncoming?.(message, store.chatName(message.chatId));
+        if (!store.isMuted(message.chatId)) onIncoming?.(message, store.chatName(message.chatId));
+      }
+      if (isNew) {
+        const { raw: _raw, extra: _extra, ...visible } = message as ChatMessage & { raw?: string; extra?: unknown };
+        this.emit('message', visible, { live: true, notify });
       }
     }
     if (changed) emit({ type: 'chats-changed' });
@@ -706,11 +1342,17 @@ export class WhatsApp {
       const id = this.resolveJid(c.id, c.pnJid);
       if (id === 'status@broadcast') continue;
       const unread = typeof c.unreadCount === 'number' ? (c.unreadCount < 0 ? 1 : c.unreadCount) : undefined;
+      const muteEnd = c.muteEndTime === undefined ? undefined : c.muteEndTime === null ? 0 : toNumber(c.muteEndTime);
+      const pinned = c.pinned === undefined ? undefined : c.pinned === null ? 0 : toNumber(c.pinned) || Date.now();
       this.opts.store.upsertChat({
         id,
         name: c.name,
         unreadCount: unread,
         lastActivity: c.conversationTimestamp ? toNumber(c.conversationTimestamp) : undefined,
+        archived: typeof c.archived === 'boolean' ? c.archived : c.archived === null ? false : undefined,
+        pinned,
+        // WhatsApp sends -1 for "always"; other values are when the mute ends (Unix ms or seconds).
+        mutedUntil: muteEnd === undefined ? undefined : muteEnd > 0 && muteEnd < 1e12 ? muteEnd * 1000 : muteEnd,
       });
     }
     if (notify) this.opts.emit({ type: 'chats-changed' });

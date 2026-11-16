@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, it } from 'node:test';
-import { Store } from '../src/main/store.ts';
+import { ftsQuery, ME, Store } from '../src/main/store.ts';
 
 const PN = '15550001111@s.whatsapp.net';
 const LID = '123456789012345@lid';
@@ -38,7 +38,7 @@ describe('Store', () => {
     assert.equal(scheduled!.groupAction, undefined);
     // Upgraded all the way to the current version, including the group-change column.
     const upgraded = new DatabaseSync(file);
-    assert.equal((upgraded.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 3);
+    assert.equal((upgraded.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 4);
     const columns = (upgraded.prepare('PRAGMA table_info(scheduled_messages)').all() as Array<{ name: string }>).map((c) => c.name);
     assert.ok(columns.includes('group_action'));
   });
@@ -130,5 +130,112 @@ describe('Store', () => {
     const b = store.createScheduled({ ...base, chatId: '15550002222@s.whatsapp.net' });
     assert.equal(store.deleteScheduled(a), undefined);
     assert.equal(store.deleteScheduled(b), '/x/file.pdf');
+  });
+
+  it('indexes messages for search, including ones stored before the upgrade', () => {
+    const file = join(tmpdir(), `wapp-fts-${process.pid}-${Date.now()}.db`);
+    const first = new Store(file);
+    first.upsertMessage({ ...message(PN, 'a', 10), body: 'Meet at the café tomorrow' });
+    first.upsertMessage({ ...message(PN, 'b', 11), body: 'কাল দেখা হবে' });
+    first.close();
+    // Pretend it was a version 3 database: the index is rebuilt on opening.
+    const raw = new DatabaseSync(file);
+    raw.exec('DROP TABLE messages_fts; DROP TRIGGER messages_fts_insert; DROP TRIGGER messages_fts_delete; DROP TRIGGER messages_fts_update; PRAGMA user_version = 3');
+    raw.close();
+
+    const store = new Store(file);
+    assert.deepEqual(store.searchMessages('cafe').map((r) => r.messageId), ['a']); // accents ignored
+    assert.deepEqual(store.searchMessages('দেখা').map((r) => r.messageId), ['b']);
+    assert.deepEqual(store.searchMessages('tomo').map((r) => r.messageId), ['a']); // prefix of the last word
+    assert.match(store.searchMessages('café')[0]!.snippet, /\u0002café\u0003/);
+
+    store.editMessage(PN, 'a', 'Meet at the station');
+    assert.equal(store.searchMessages('café').length, 0);
+    assert.equal(store.searchMessages('station').length, 1);
+    store.markDeleted(PN, 'a');
+    assert.equal(store.searchMessages('station').length, 0);
+    assert.equal(store.searchMessages('"').length, 0); // nothing searchable: no error
+    assert.equal(ftsQuery('  '), '');
+  });
+
+  it('collects reactions and poll votes onto messages', () => {
+    const store = new Store(':memory:');
+    store.upsertMessage({
+      ...message(PN, 'p', 10),
+      kind: 'poll',
+      body: 'Lunch?',
+      extra: { poll: { options: ['Pizza', 'Salad'], selectableCount: 1 } },
+    });
+    store.setReaction(PN, 'p', ME, '👍', 1000);
+    store.setReaction(PN, 'p', PN, '👍', 1001);
+    store.setReaction(PN, 'p', PN, '❤️', 1002); // replaces their 👍
+    store.setReaction(PN, 'p', PN, '😂', 900); // older: ignored
+    store.setPollVote(PN, 'p', ME, ['Pizza'], 1000);
+    store.setPollVote(PN, 'p', PN, ['Salad'], 1000);
+    store.upsertContact({ id: PN, name: 'Priya' });
+
+    const [m] = store.listMessages(PN);
+    assert.deepEqual(m!.reactions, [
+      { emoji: '👍', count: 1, mine: true },
+      { emoji: '❤️', count: 1, mine: false },
+    ]);
+    assert.equal(m!.poll!.totalVoters, 2);
+    assert.deepEqual(
+      m!.poll!.options.map((o) => [o.name, o.count, o.mine, o.voters]),
+      [
+        ['Pizza', 1, true, ['You']],
+        ['Salad', 1, false, ['Priya']],
+      ],
+    );
+    store.setReaction(PN, 'p', ME, '', 2000);
+    assert.deepEqual(store.getMessage(PN, 'p')!.reactions, [{ emoji: '❤️', count: 1, mine: false }]);
+  });
+
+  it('keeps chat flags and labels, and lists pinned chats first', () => {
+    const store = new Store(':memory:');
+    const other = '15550002222@s.whatsapp.net';
+    store.upsertChat({ id: PN, lastActivity: 10 });
+    store.upsertChat({ id: other, lastActivity: 20 });
+    store.upsertChat({ id: PN, pinned: 5000, mutedUntil: -1 });
+    store.upsertChat({ id: PN, lastActivity: 11 }); // a later update without flags keeps them
+    const label = store.saveLabel({ name: 'Customers', color: 2 });
+    store.setChatLabel(PN, label, true);
+
+    const [first, second] = store.listChats();
+    assert.equal(first!.id, PN);
+    assert.equal(first!.pinned, true);
+    assert.equal(first!.mutedUntil, -1);
+    assert.deepEqual(first!.labels, [label]);
+    assert.equal(second!.pinned, false);
+    assert.ok(store.isMuted(PN));
+    assert.deepEqual(store.listLabels(), [{ id: label, name: 'Customers', color: 2, count: 1 }]);
+
+    store.upsertChat({ id: PN, archived: true, pinned: 0 });
+    assert.equal(store.listChats().find((c) => c.id === PN)!.archived, true);
+    store.deleteLabel(label);
+    assert.deepEqual(store.listChats().find((c) => c.id === PN)!.labels, []);
+  });
+
+  it('keeps status updates for a day, out of the chat list', () => {
+    const store = new Store(':memory:');
+    const now = Date.now();
+    const nowS = Math.floor(now / 1000);
+    store.upsertMessage({ ...message('status@broadcast', 's1', nowS - 60), author: PN });
+    store.upsertMessage({ ...message('status@broadcast', 's0', nowS - 2 * 86_400), author: PN });
+    assert.deepEqual(store.listStatuses(now).map((m) => m.id), ['s1']);
+    assert.equal(store.listChats().some((c) => c.id === 'status@broadcast'), false);
+    store.pruneStatuses(now);
+    assert.equal(store.getMessage('status@broadcast', 's0'), undefined);
+    assert.ok(store.getMessage('status@broadcast', 's1'));
+  });
+
+  it('records calls without overwriting an auto-rejected status', () => {
+    const store = new Store(':memory:');
+    store.upsertCall({ id: 'c1', chatId: PN, status: 'missed', startedAt: 1000 });
+    store.upsertCall({ id: 'c1', chatId: PN, status: 'auto-rejected', startedAt: 1000 });
+    store.upsertCall({ id: 'c1', chatId: PN, status: 'rejected', startedAt: 1000, endedAt: 2000 });
+    const [call] = store.listCalls();
+    assert.equal(call!.status, 'auto-rejected');
+    assert.equal(call!.endedAt, 2000);
   });
 });

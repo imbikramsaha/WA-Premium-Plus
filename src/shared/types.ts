@@ -47,6 +47,54 @@ export interface MediaInfo {
   downloadable: boolean;
 }
 
+/** The message a reply quotes. */
+export interface QuotedMessage {
+  id: string;
+  /** Who wrote the quoted message; unset when it was us. */
+  author?: string;
+  authorName?: string;
+  fromMe?: boolean;
+  kind: MessageKind;
+  body: string;
+}
+
+export interface ReactionSummary {
+  emoji: string;
+  count: number;
+  /** True when one of these reactions is ours. */
+  mine: boolean;
+}
+
+export interface PollOption {
+  name: string;
+  count: number;
+  /** Names of the people who picked this option. */
+  voters: string[];
+  mine: boolean;
+}
+
+export interface PollInfo {
+  options: PollOption[];
+  /** 1 for single choice; 0 when any number of options can be picked. */
+  selectableCount: number;
+  totalVoters: number;
+}
+
+export interface LocationInfo {
+  lat: number;
+  lng: number;
+  name?: string;
+  address?: string;
+  live?: boolean;
+  /** Map preview image as a data URL, when included. */
+  thumb?: string;
+}
+
+export interface ContactCard {
+  name: string;
+  phones: Array<{ number: string; /** WhatsApp ID, when the card says the number is on WhatsApp. */ jid?: string }>;
+}
+
 export interface ChatMessage {
   id: string;
   chatId: string;
@@ -63,6 +111,12 @@ export interface ChatMessage {
   ack?: MessageAck;
   edited?: boolean;
   media?: MediaInfo;
+  quoted?: QuotedMessage;
+  forwarded?: boolean;
+  reactions?: ReactionSummary[];
+  poll?: PollInfo;
+  location?: LocationInfo;
+  contacts?: ContactCard[];
 }
 
 export interface ChatSummary {
@@ -73,7 +127,90 @@ export interface ChatSummary {
   /** Last activity WhatsApp reported (Unix seconds), even when we have no messages. */
   lastActivity?: number;
   lastMessage?: Pick<ChatMessage, 'body' | 'kind' | 'fromMe' | 'timestamp'>;
+  archived: boolean;
+  pinned: boolean;
+  /** Muted until this time (Unix ms); -1 when muted forever; 0 when not muted. */
+  mutedUntil: number;
+  /** IDs of the labels on this chat. */
+  labels: number[];
 }
+
+export interface Label {
+  id: number;
+  name: string;
+  /** Index into the label colour palette. */
+  color: number;
+  /** Chats with this label. */
+  count: number;
+}
+
+export interface ChannelInfo {
+  id: string;
+  name: string;
+  description?: string;
+  subscribers?: number;
+  verified: boolean;
+  link?: string;
+  muted: boolean;
+  /** Unix seconds. */
+  createdAt?: number;
+}
+
+export interface AccountSummary {
+  id: string;
+  name: string;
+  phone?: string;
+  status: ConnectionStatus;
+  linked: boolean;
+  /** Chats with unread messages (not counting muted or archived ones). */
+  unreadChats: number;
+  active: boolean;
+}
+
+export type MemberAction = 'add' | 'remove' | 'promote' | 'demote';
+
+export type CallStatus = 'missed' | 'rejected' | 'answered' | 'outgoing' | 'auto-rejected';
+
+export interface CallRecord {
+  id: string;
+  chatId: string;
+  chatName: string;
+  fromMe: boolean;
+  isVideo: boolean;
+  isGroup: boolean;
+  status: CallStatus;
+  /** Unix ms. */
+  startedAt: number;
+  endedAt?: number;
+}
+
+export interface SearchResult {
+  chatId: string;
+  chatName: string;
+  messageId: string;
+  fromMe: boolean;
+  authorName?: string;
+  kind: MessageKind;
+  /** Unix seconds. */
+  timestamp: number;
+  /** Matching text, with matches wrapped in \u0002 and \u0003. */
+  snippet: string;
+}
+
+/** Chat actions synced with WhatsApp (your phone shows the same). */
+export type ChatAction =
+  | { type: 'archive'; value: boolean }
+  | { type: 'pin'; value: boolean }
+  /** Mute until a time (Unix ms), -1 for always, or 0 to unmute. */
+  | { type: 'mute'; until: number }
+  | { type: 'markUnread' }
+  | { type: 'delete' };
+
+/** What to send besides plain text and files. */
+export type RichContent =
+  | { type: 'poll'; question: string; options: string[]; multiple: boolean }
+  | { type: 'location'; lat: number; lng: number; name?: string; address?: string }
+  | { type: 'contacts'; contacts: ContactCard[] };
 
 export interface GroupParticipantInfo {
   id: string;
@@ -195,7 +332,24 @@ export type AppEvent =
   | { type: 'chats-changed' }
   | { type: 'message'; message: ChatMessage }
   | { type: 'ack'; chatId: string; messageId: string; ack: MessageAck }
-  | { type: 'scheduled-changed' };
+  | { type: 'scheduled-changed' }
+  /** A profile picture changed; url null when there is none. */
+  | { type: 'avatar'; id: string; url: string | null }
+  | { type: 'labels-changed' }
+  | { type: 'statuses-changed' }
+  | { type: 'calls-changed' }
+  /** A pairing code to type on the phone, when linking by phone number. */
+  | { type: 'pairing-code'; code: string }
+  /** Account list details changed (names, connection, unread counts). */
+  | { type: 'accounts-changed' }
+  /** A different account is now shown: the window reloads its data. */
+  | { type: 'account-switched' };
+
+export interface ContactInfo {
+  id: string;
+  name: string;
+  phone?: string;
+}
 
 /** The API the preload script exposes to the renderer as window.wapp. */
 export interface WappApi {
@@ -207,7 +361,56 @@ export interface WappApi {
   /** Newest messages first page, or older ones before a timestamp (seconds). */
   listMessages(chatId: string, before?: number): Promise<ChatMessage[]>;
   markRead(chatId: string): Promise<void>;
-  sendText(chatId: string, text: string): Promise<void>;
+  /** Sends text, optionally as a reply to one of the chat's messages. */
+  sendText(chatId: string, text: string, quotedId?: string): Promise<void>;
+  sendRich(chatId: string, content: RichContent, quotedId?: string): Promise<void>;
+  /** Reacts to a message; an empty emoji removes our reaction. */
+  react(chatId: string, messageId: string, emoji: string): Promise<void>;
+  forward(chatId: string, messageId: string, toChatIds: string[]): Promise<void>;
+  editMessage(chatId: string, messageId: string, text: string): Promise<void>;
+  deleteMessage(chatId: string, messageId: string, forEveryone: boolean): Promise<void>;
+  votePoll(chatId: string, messageId: string, options: string[]): Promise<void>;
+  /** Messages around one message (for jumping to a search result or a quoted message). */
+  listMessagesAround(chatId: string, messageId: string): Promise<ChatMessage[]>;
+  searchMessages(query: string, chatId?: string): Promise<SearchResult[]>;
+
+  chatAction(chatId: string, action: ChatAction): Promise<void>;
+  listLabels(): Promise<Label[]>;
+  saveLabel(label: { id?: number; name: string; color: number }): Promise<void>;
+  deleteLabel(id: number): Promise<void>;
+  setChatLabel(chatId: string, labelId: number, on: boolean): Promise<void>;
+  /** Cached profile picture URL (null when there is none); fetches it in the background when stale. */
+  getAvatar(id: string): Promise<string | null>;
+  listCalls(): Promise<CallRecord[]>;
+  /** Starts linking by phone number instead of QR code; the code arrives as a 'pairing-code' event. */
+  requestPairingCode(phone: string): Promise<string>;
+  /** Checks which phone numbers use WhatsApp; returns their WhatsApp IDs. */
+  checkNumbers(phones: string[]): Promise<Array<{ phone: string; jid?: string }>>;
+  /** Saved contacts and people you've chatted with, for pickers. */
+  listContacts(): Promise<ContactInfo[]>;
+  /** Opens a chat with a phone number (after checking it's on WhatsApp); returns the chat ID. */
+  startChat(phone: string): Promise<string>;
+
+  listAccounts(): Promise<AccountSummary[]>;
+  switchAccount(id: string): Promise<void>;
+  addAccount(): Promise<void>;
+  removeAccount(id: string): Promise<void>;
+
+  /** Status updates from the last 24 hours (yours and your contacts'). */
+  listStatuses(): Promise<ChatMessage[]>;
+  postStatus(text: string, file?: OutgoingFile, backgroundColor?: string): Promise<void>;
+  markStatusViewed(messageId: string, author: string): Promise<void>;
+
+  followChannel(link: string): Promise<string>;
+  unfollowChannel(id: string): Promise<void>;
+  getChannelInfo(id: string): Promise<ChannelInfo>;
+  muteChannel(id: string, muted: boolean): Promise<void>;
+
+  /** Changes a group setting now (admins only). */
+  applyGroupAction(chatId: string, action: GroupAction): Promise<void>;
+  updateMembers(groupId: string, ids: string[], action: MemberAction): Promise<Array<{ id: string; problem: string }>>;
+  createGroup(subject: string, members: string[]): Promise<string>;
+  leaveGroup(groupId: string): Promise<void>;
   sendFile(chatId: string, file: OutgoingFile, caption?: string): Promise<void>;
   /** Sends a voice note recorded as WebM/Opus; the app converts it to WhatsApp's format. */
   sendVoiceNote(chatId: string, webm: Uint8Array, seconds: number, waveform: number[]): Promise<void>;

@@ -1,14 +1,20 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { ChatSummary, ConnectionState, ScheduledMessage } from '../../../shared/types';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import type { ChatSummary, ConnectionState, Label, ScheduledMessage } from '../../../shared/types';
+import { LABEL_COLORS } from '../chatMenu';
 import { errorMessage } from '../format';
+import { AccountSwitcher } from './AccountSwitcher';
+import { CallsView } from './CallsView';
 import { ChatList } from './ChatList';
-import { Conversation } from './Conversation';
-import { ChatsIcon, ClockIcon, CloseIcon, LogoutIcon, PhoneIcon } from './Icons';
+import { Conversation, type ConversationExtras } from './Conversation';
+import { ChatsIcon, ClockIcon, CloseIcon, ComposeIcon, MegaphoneIcon, PhoneIcon, StatusIcon, UsersIcon } from './Icons';
 import { Logo } from './Logo';
+import { Menu, Modal, useMenu } from './Menu';
 import { ScheduleDialog, type ScheduleDraft } from './ScheduleDialog';
 import { ScheduledList } from './ScheduledList';
+import { FollowChannelDialog, NewChatDialog, NewGroupDialog } from './ShareDialogs';
+import { StatusView } from './StatusView';
 
-type View = 'chats' | 'scheduled';
+export type View = 'chats' | 'status' | 'calls' | 'scheduled';
 
 const CALLS_INTRO_KEY = 'wapp.callsIntroSeen';
 
@@ -20,21 +26,34 @@ function callsIntroSeen(): boolean {
   }
 }
 
-export function MainScreen({ connection }: { connection: ConnectionState }) {
-  const [view, setView] = useState<View>('chats');
+/** Extra views and conversation actions, added by later features. */
+export interface MainScreenExtras {
+  railItems?: Array<{ view: string; title: string; icon: ReactNode; badge?: number }>;
+  renderView?: (view: string, api: { openChat: (chatId: string, messageId?: string) => void; chats: ChatSummary[] }) => ReactNode;
+  conversation?: ConversationExtras;
+}
+
+export function MainScreen({ connection, extras }: { connection: ConnectionState; extras?: MainScreenExtras }) {
+  const [view, setView] = useState<string>('chats');
   const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [labels, setLabels] = useState<Label[]>([]);
   const [scheduled, setScheduled] = useState<ScheduledMessage[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [focus, setFocus] = useState<{ messageId: string; nonce: number } | undefined>(undefined);
   const [draft, setDraft] = useState<ScheduleDraft | null>(null);
   const [viewer, setViewer] = useState<string | null>(null);
   const [callsIntro, setCallsIntro] = useState<{ chatId?: string } | null>(null);
+  const [dialog, setDialog] = useState<'chat' | 'group' | 'channel' | 'label' | null>(null);
+  const { menu, close: closeMenu, openUnder } = useMenu();
 
   useEffect(() => {
     let timer: number | undefined;
     const loadChats = () => void window.wapp.listChats().then(setChats);
     const loadScheduled = () => void window.wapp.listScheduled().then(setScheduled);
+    const loadLabels = () => void window.wapp.listLabels().then(setLabels);
     loadChats();
     loadScheduled();
+    loadLabels();
     const off = window.wapp.onEvent((event) => {
       // History sync can fire many updates in a row; reload at most a few times a second.
       if (event.type === 'chats-changed' && timer === undefined) {
@@ -44,6 +63,7 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
         }, 250);
       }
       if (event.type === 'scheduled-changed') loadScheduled();
+      if (event.type === 'labels-changed') loadLabels();
     });
     // Refresh relative times ("in 5 minutes") once a minute.
     const tick = window.setInterval(loadScheduled, 60_000);
@@ -63,17 +83,13 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
 
   const closeDialog = useCallback(() => setDraft(null), []);
 
-  async function logout() {
-    const ok = window.confirm(
-      'Log out of WhatsApp on this computer?\n\nThis removes your chats and scheduled messages from WA Premium Plus.',
-    );
-    if (!ok) return;
-    try {
-      await window.wapp.logout();
-    } catch (err) {
-      window.alert(errorMessage(err));
-    }
-  }
+  const openChat = useCallback((chatId: string, messageId?: string) => {
+    setView('chats');
+    setSelectedId(chatId);
+    setFocus(messageId ? { messageId, nonce: Date.now() } : undefined);
+    // A chat that was just created may not be in the list yet.
+    void window.wapp.listChats().then(setChats);
+  }, []);
 
   function openCalls(chatId?: string) {
     if (!callsIntroSeen()) {
@@ -87,113 +103,152 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
   const pending = scheduled.filter((s) => s.status === 'pending').length;
   const attention = scheduled.filter((s) => s.status === 'failed' || s.status === 'missed').length;
   const connected = connection.status === 'open';
+  const sidebarView = view === 'chats';
+
+  const rail: Array<{ view: string; title: string; icon: ReactNode; badge?: number; alert?: boolean }> = [
+    { view: 'chats', title: 'Chats', icon: <ChatsIcon /> },
+    { view: 'status', title: 'Status', icon: <StatusIcon /> },
+    { view: 'calls', title: 'Calls', icon: <PhoneIcon /> },
+    { view: 'scheduled', title: 'Scheduled', icon: <ClockIcon />, badge: attention || pending, alert: attention > 0 },
+    ...(extras?.railItems ?? []),
+  ];
 
   return (
-    <div className={`layout view-${view}`}>
+    <div className={`layout view-${sidebarView ? 'chats' : 'full'}`}>
       <nav className="rail">
         <div className="rail-logo" title="WA Premium Plus">
           <Logo size={32} />
         </div>
-        <button className={`rail-button${view === 'chats' ? ' active' : ''}`} onClick={() => setView('chats')} title="Chats">
-          <ChatsIcon />
-        </button>
-        <button
-          className={`rail-button${view === 'scheduled' ? ' active' : ''}`}
-          onClick={() => setView('scheduled')}
-          title="Scheduled messages"
-        >
-          <ClockIcon />
-          {(attention > 0 || pending > 0) && (
-            <span className={`rail-badge${attention > 0 ? ' alert' : ''}`}>{attention || pending}</span>
-          )}
-        </button>
-        <button className="rail-button" onClick={() => openCalls()} title="Voice and video calls (opens WhatsApp Web)">
-          <PhoneIcon />
-        </button>
+        {rail.map((item) => (
+          <button
+            key={item.view}
+            className={`rail-button${view === item.view ? ' active' : ''}`}
+            onClick={() => setView(item.view)}
+            title={item.title}
+          >
+            {item.icon}
+            {item.badge ? <span className={`rail-badge${item.alert ? ' alert' : ''}`}>{item.badge}</span> : null}
+          </button>
+        ))}
         <div className="rail-spacer" />
-        <button className="rail-button" onClick={() => void logout()} title="Log out">
-          <LogoutIcon />
-        </button>
+        <AccountSwitcher />
       </nav>
 
-      {view === 'chats' && (
+      {sidebarView && (
         <aside className="sidebar">
           <header className="sidebar-header">
             <h1>Chats</h1>
             <button
-              className="button ghost small"
-              onClick={() => setDraft({ chatIds: [], body: '' })}
-              title="Schedule a message"
+              className="icon-button"
+              title="New chat, group or channel"
+              onClick={(e) =>
+                openUnder(e.currentTarget, [
+                  { label: 'New chat', icon: <ChatsIcon size={15} />, onClick: () => setDialog('chat'), disabled: !connected },
+                  { label: 'New group', icon: <UsersIcon size={15} />, onClick: () => setDialog('group'), disabled: !connected },
+                  { label: 'Follow a channel', icon: <MegaphoneIcon size={15} />, onClick: () => setDialog('channel'), disabled: !connected },
+                  {
+                    label: 'Schedule a message',
+                    icon: <ClockIcon size={15} />,
+                    separator: true,
+                    onClick: () => setDraft({ chatIds: [], body: '' }),
+                  },
+                ])
+              }
             >
-              <ClockIcon size={16} />
-              Schedule
+              <ComposeIcon />
             </button>
           </header>
-          <ChatList chats={chats} selectedId={selectedId} onSelect={setSelectedId} />
+          <ChatList
+            chats={chats}
+            labels={labels}
+            selectedId={selectedId}
+            onSelect={(id) => openChat(id)}
+            onOpenMessage={openChat}
+            onNewLabel={() => setDialog('label')}
+          />
         </aside>
       )}
 
-      <main className="content">
-        {!connected && (
-          <div className="banner">
-            Connecting to WhatsApp… Scheduled messages will be sent as soon as the connection is back.
-          </div>
-        )}
-        {view === 'scheduled' ? (
-          <ScheduledList
-            items={scheduled}
-            onNew={() => setDraft({ chatIds: [], body: '' })}
-            onEdit={(item) =>
-              setDraft({
-                id: item.id,
-                target: item.target,
-                chatIds: item.target === 'status' ? [] : [item.chatId],
-                body: item.body,
-                sendAt: Math.max(item.sendAt, Date.now() + 5 * 60_000),
-                rule: item.rule,
-                existingAttachment: item.attachment,
-                groupAction: item.groupAction,
-              })
-            }
-          />
-        ) : selectedChat ? (
-          <Conversation
-            key={selectedChat.id}
-            chat={selectedChat}
-            connected={connected}
-            onOpenImage={setViewer}
-            onCall={openCalls}
-            onScheduleGroupChange={(chatId) => setDraft({ target: 'group', chatIds: [chatId], body: '' })}
-            onSchedule={(body, attachmentPath, clearComposer) =>
-              setDraft({ chatIds: [selectedChat.id], body, attachmentPath, onSaved: clearComposer })
-            }
-          />
-        ) : (
-          <div className="empty-state">
-            <div className="empty-logo">
-              <Logo size={72} />
+      {view === 'status' ? (
+        <StatusView connection={connection} />
+      ) : (
+        <main className="content">
+          {!connected && (
+            <div className="banner">
+              Connecting to WhatsApp… Scheduled messages will be sent as soon as the connection is back.
             </div>
-            <h2>WA Premium Plus</h2>
-            <p>Pick a chat to start messaging, or schedule a message to go out later.</p>
-            <div className="feature-list">
-              <div className="feature">
-                <ClockIcon size={20} />
-                Schedule and repeat messages
+          )}
+          {view === 'scheduled' ? (
+            <ScheduledList
+              items={scheduled}
+              onNew={() => setDraft({ chatIds: [], body: '' })}
+              onEdit={(item) =>
+                setDraft({
+                  id: item.id,
+                  target: item.target,
+                  chatIds: item.target === 'status' ? [] : [item.chatId],
+                  body: item.body,
+                  sendAt: Math.max(item.sendAt, Date.now() + 5 * 60_000),
+                  rule: item.rule,
+                  existingAttachment: item.attachment,
+                  groupAction: item.groupAction,
+                })
+              }
+            />
+          ) : view === 'calls' ? (
+            <CallsView onCall={openCalls} onOpenChat={openChat} />
+          ) : view !== 'chats' ? (
+            extras?.renderView?.(view, { openChat, chats })
+          ) : selectedChat ? (
+            <Conversation
+              key={selectedChat.id}
+              chat={selectedChat}
+              chats={chats}
+              labels={labels}
+              connected={connected}
+              focus={focus}
+              extras={extras?.conversation}
+              onOpenImage={setViewer}
+              onCall={openCalls}
+              onOpenChat={openChat}
+              onNewLabel={() => setDialog('label')}
+              onScheduleGroupChange={(chatId) => setDraft({ target: 'group', chatIds: [chatId], body: '' })}
+              onSchedule={(body, attachmentPath, clearComposer) =>
+                setDraft({ chatIds: [selectedChat.id], body, attachmentPath, onSaved: clearComposer })
+              }
+            />
+          ) : (
+            <div className="empty-state">
+              <div className="empty-logo">
+                <Logo size={72} />
               </div>
-              <div className="feature">
-                <ChatsIcon size={20} />
-                Send to many chats at once
-              </div>
-              <div className="feature">
-                <PhoneIcon size={20} />
-                Calls through WhatsApp Web
+              <h2>WA Premium Plus</h2>
+              <p>Pick a chat to start messaging, or schedule a message to go out later.</p>
+              <div className="feature-list">
+                <div className="feature">
+                  <ClockIcon size={20} />
+                  Schedule and repeat messages
+                </div>
+                <div className="feature">
+                  <ChatsIcon size={20} />
+                  Search every message
+                </div>
+                <div className="feature">
+                  <PhoneIcon size={20} />
+                  Calls through WhatsApp Web
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </main>
+          )}
+        </main>
+      )}
 
       {draft && <ScheduleDialog draft={draft} chats={chats} onClose={closeDialog} />}
+      {menu && <Menu {...menu} onClose={closeMenu} />}
+      {dialog === 'chat' && <NewChatDialog onClose={() => setDialog(null)} onOpen={openChat} />}
+      {dialog === 'group' && <NewGroupDialog onClose={() => setDialog(null)} onOpen={openChat} />}
+      {dialog === 'channel' && <FollowChannelDialog onClose={() => setDialog(null)} onOpen={openChat} />}
+      {dialog === 'label' && <LabelDialog onClose={() => setDialog(null)} />}
 
       {viewer && (
         <div className="lightbox" onClick={() => setViewer(null)}>
@@ -205,23 +260,12 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
       )}
 
       {callsIntro && (
-        <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setCallsIntro(null)}>
-          <div className="dialog narrow">
-            <header className="dialog-header">
-              <h2>Voice and video calls</h2>
-              <button className="icon-button" onClick={() => setCallsIntro(null)} title="Close">
-                <CloseIcon />
-              </button>
-            </header>
-            <p>
-              Calls open in the official <strong>WhatsApp Web</strong>, in a separate window. No open-source WhatsApp
-              library can carry call audio and video, so this is the reliable way to call from your computer.
-            </p>
-            <ol className="steps">
-              <li>The first time, the window shows a QR code. Scan it from Linked devices on your phone.</li>
-              <li>Then use the call buttons in WhatsApp Web as usual. Allow the microphone and camera when asked.</li>
-            </ol>
-            <footer className="dialog-footer">
+        <Modal
+          title="Voice and video calls"
+          narrow
+          onClose={() => setCallsIntro(null)}
+          footer={
+            <>
               <button className="button" onClick={() => setCallsIntro(null)}>
                 Cancel
               </button>
@@ -240,10 +284,59 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
               >
                 Open WhatsApp Web
               </button>
-            </footer>
-          </div>
-        </div>
+            </>
+          }
+        >
+          <p>
+            Calls open in the official <strong>WhatsApp Web</strong>, in a separate window. No open-source WhatsApp library
+            can carry call audio and video, so this is the reliable way to call from your computer.
+          </p>
+          <ol className="steps">
+            <li>The first time, the window shows a QR code. Scan it from Linked devices on your phone.</li>
+            <li>Then use the call buttons in WhatsApp Web as usual. Allow the microphone and camera when asked.</li>
+          </ol>
+        </Modal>
       )}
     </div>
+  );
+}
+
+function LabelDialog({ onClose }: { onClose: () => void }) {
+  const [name, setName] = useState('');
+  const [color, setColor] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  async function save() {
+    try {
+      await window.wapp.saveLabel({ name, color });
+      onClose();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+  return (
+    <Modal
+      title="New label"
+      narrow
+      onClose={onClose}
+      footer={
+        <>
+          <button className="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="button primary" disabled={!name.trim()} onClick={() => void save()}>
+            Create label
+          </button>
+        </>
+      }
+    >
+      <input autoFocus value={name} maxLength={60} onChange={(e) => setName(e.target.value)} placeholder="Customers, Family, To follow up…" />
+      <div className="swatches">
+        {LABEL_COLORS.map((c, i) => (
+          <button key={c} className={i === color ? 'active' : ''} style={{ background: c }} title="Label colour" onClick={() => setColor(i)} />
+        ))}
+      </div>
+      <p className="hint">Labels are kept on this computer. Add them to chats from a chat's menu (right-click it).</p>
+      {error && <p className="error small">{error}</p>}
+    </Modal>
   );
 }

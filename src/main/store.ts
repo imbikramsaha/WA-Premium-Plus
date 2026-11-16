@@ -5,9 +5,14 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import type {
   AttachmentInfo,
   AttachmentKind,
+  CallRecord,
+  CallStatus,
   ChatMessage,
   ChatSummary,
+  ContactCard,
   GroupAction,
+  Label,
+  LocationInfo,
   MediaInfo,
   MessageAck,
   MessageKind,
@@ -15,6 +20,8 @@ import type {
   ScheduledMessage,
   ScheduleStatus,
   ScheduleTarget,
+  QuotedMessage,
+  SearchResult,
 } from '../shared/types';
 
 const SCHEMA_V1 = `
@@ -84,15 +91,194 @@ const ADDED_COLUMNS: Array<[string, string, string]> = [
   ['scheduled_messages', 'sent_count', 'INTEGER NOT NULL DEFAULT 0'],
   // version 3: scheduled group settings changes
   ['scheduled_messages', 'group_action', 'TEXT'],
+  // version 4: replies, forwards, polls/locations/contact cards, chat flags
+  ['messages', 'quoted', 'TEXT'],
+  ['messages', 'forwarded', 'INTEGER NOT NULL DEFAULT 0'],
+  ['messages', 'extra', 'TEXT'],
+  ['chats', 'archived', 'INTEGER NOT NULL DEFAULT 0'],
+  ['chats', 'pinned', 'INTEGER NOT NULL DEFAULT 0'],
+  ['chats', 'muted_until', 'INTEGER NOT NULL DEFAULT 0'],
 ];
 
-const SCHEMA_VERSION = 3;
+/** Tables added in version 4. Feature modules (automation, broadcasts, webhooks) use some of them. */
+const SCHEMA_V4 = `
+CREATE TABLE IF NOT EXISTS reactions (
+  chat_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  sender TEXT NOT NULL,
+  emoji TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  PRIMARY KEY (chat_id, message_id, sender)
+);
+CREATE TABLE IF NOT EXISTS poll_votes (
+  chat_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  voter TEXT NOT NULL,
+  options TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  PRIMARY KEY (chat_id, message_id, voter)
+);
+CREATE TABLE IF NOT EXISTS labels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  color INTEGER NOT NULL DEFAULT 0,
+  wa_id TEXT UNIQUE
+);
+CREATE TABLE IF NOT EXISTS chat_labels (
+  chat_id TEXT NOT NULL,
+  label_id INTEGER NOT NULL,
+  PRIMARY KEY (chat_id, label_id)
+);
+CREATE TABLE IF NOT EXISTS profile_pics (
+  id TEXT PRIMARY KEY,
+  file TEXT,
+  fetched_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS calls (
+  id TEXT PRIMARY KEY,
+  chat_id TEXT NOT NULL,
+  from_me INTEGER NOT NULL DEFAULT 0,
+  is_video INTEGER NOT NULL DEFAULT 0,
+  is_group INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS calls_by_time ON calls (started_at);
+CREATE TABLE IF NOT EXISTS quick_replies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shortcut TEXT NOT NULL UNIQUE,
+  body TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  config TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rule_fires (
+  rule_id INTEGER NOT NULL,
+  chat_id TEXT NOT NULL,
+  at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS rule_fires_lookup ON rule_fires (rule_id, chat_id, at);
+CREATE TABLE IF NOT EXISTS reminders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id TEXT NOT NULL,
+  message_id TEXT,
+  note TEXT NOT NULL DEFAULT '',
+  due_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  only_if_no_reply INTEGER NOT NULL DEFAULT 1,
+  follow_up TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  done_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS contact_lists (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  columns TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS list_members (
+  list_id INTEGER NOT NULL,
+  jid TEXT NOT NULL,
+  name TEXT,
+  fields TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (list_id, jid)
+);
+CREATE TABLE IF NOT EXISTS opt_outs (
+  jid TEXT PRIMARY KEY,
+  at INTEGER NOT NULL,
+  source TEXT
+);
+CREATE TABLE IF NOT EXISTS campaigns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  list_id INTEGER,
+  body TEXT NOT NULL,
+  attachment_path TEXT,
+  attachment_name TEXT,
+  attachment_mime TEXT,
+  attachment_kind TEXT,
+  attachment_size INTEGER,
+  status TEXT NOT NULL DEFAULT 'draft',
+  start_at INTEGER,
+  daily_cap INTEGER NOT NULL,
+  min_delay INTEGER NOT NULL,
+  max_delay INTEGER NOT NULL,
+  opt_out_footer INTEGER NOT NULL DEFAULT 1,
+  next_at INTEGER,
+  last_error TEXT,
+  created_at INTEGER NOT NULL,
+  finished_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS campaign_recipients (
+  campaign_id INTEGER NOT NULL,
+  jid TEXT NOT NULL,
+  name TEXT,
+  fields TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'pending',
+  sent_at INTEGER,
+  error TEXT,
+  PRIMARY KEY (campaign_id, jid)
+);
+CREATE TABLE IF NOT EXISTS webhooks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  url TEXT NOT NULL,
+  secret TEXT NOT NULL,
+  events TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_status TEXT,
+  last_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+`;
+
+/**
+ * Full-text index over message text, kept in sync by triggers. It's an external-content
+ * table: it stores only the index, and reads the text from the messages table.
+ */
+const SEARCH_INDEX = `
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+  body, content='messages', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+  INSERT INTO messages_fts (rowid, body) VALUES (new.rowid, new.body);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+  INSERT INTO messages_fts (messages_fts, rowid, body) VALUES ('delete', old.rowid, old.body);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF body ON messages
+WHEN old.body IS NOT new.body BEGIN
+  INSERT INTO messages_fts (messages_fts, rowid, body) VALUES ('delete', old.rowid, old.body);
+  INSERT INTO messages_fts (rowid, body) VALUES (new.rowid, new.body);
+END;
+`;
+
+const SCHEMA_VERSION = 4;
+
+/** Status updates are stored as messages in this chat, which the chat list leaves out. */
+export const STATUS_CHAT = 'status@broadcast';
+/** Status updates disappear after a day. */
+const STATUS_LIFETIME_S = 24 * 60 * 60;
 
 export interface ChatUpsert {
   id: string;
   name?: string | null;
   unreadCount?: number | null;
   lastActivity?: number | null;
+  archived?: boolean | null;
+  /** When the chat was pinned (Unix ms), or 0 to unpin. */
+  pinned?: number | null;
+  /** Muted until (Unix ms), -1 for always, 0 for not muted. */
+  mutedUntil?: number | null;
 }
 
 export interface ContactUpsert {
@@ -101,10 +287,24 @@ export interface ContactUpsert {
   notify?: string | null;
 }
 
+/** Message details kept as JSON: poll questions, locations and contact cards. */
+export interface MessageExtra {
+  poll?: { options: string[]; selectableCount: number };
+  /** Call log entries in chats. `outcome` is WhatsApp's (CONNECTED, MISSED, REJECTED...). */
+  call?: { video: boolean; outcome: string; seconds?: number };
+  /** `thumb` is plain base64 here. */
+  location?: LocationInfo;
+  contacts?: ContactCard[];
+}
+
 /** A message as stored, including the raw WhatsApp payload needed to download media. */
 export interface StoredMessage extends ChatMessage {
   raw?: string;
+  extra?: MessageExtra;
 }
+
+/** The current user's own reactions and poll votes are stored under this sender. */
+export const ME = 'me';
 
 export interface Attachment extends AttachmentInfo {
   path: string;
@@ -157,6 +357,9 @@ interface MessageRow {
   width: number | null;
   height: number | null;
   local_file: string | null;
+  quoted: string | null;
+  forwarded: number;
+  extra: string | null;
 }
 
 interface ScheduledRow {
@@ -188,7 +391,8 @@ const MEDIA_KINDS = new Set<MessageKind>(['image', 'video', 'audio', 'document',
 const NAME_SQL = `COALESCE(ct.name, NULLIF(c.name, ''), ct.notify)`;
 
 export class Store {
-  private readonly db: DatabaseSync;
+  /** The database, shared with feature modules that keep their own tables in it. */
+  readonly db: DatabaseSync;
   /** Turns a stored file name into a URL the window can load. */
   mediaUrl: (fileName: string) => string = (fileName) => `wapp-media://media/${encodeURIComponent(fileName)}`;
 
@@ -202,13 +406,30 @@ export class Store {
     const { user_version: version } = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
     if (version >= SCHEMA_VERSION) return;
     this.db.exec(SCHEMA_V1);
+    this.db.exec(SCHEMA_V4);
     for (const [table, column, definition] of ADDED_COLUMNS) {
       const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
       if (!columns.some((c) => c.name === column)) {
         this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
       }
     }
+    this.db.exec(SEARCH_INDEX);
+    // Index the messages stored before search existed.
+    if (version < 4) this.db.exec(`INSERT INTO messages_fts (messages_fts) VALUES ('rebuild')`);
     this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  getSetting<T>(key: string, fallback: T): T {
+    const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
+    return row ? (safeJson<T>(row.value) ?? fallback) : fallback;
+  }
+
+  setSetting(key: string, value: unknown): void {
+    this.db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, JSON.stringify(value));
   }
 
   transaction(fn: () => void): void {
@@ -225,7 +446,11 @@ export class Store {
   /** Removes all account data. Used when the user logs out. */
   clearAll(): void {
     this.db.exec(
-      'DELETE FROM chats; DELETE FROM contacts; DELETE FROM lid_map; DELETE FROM messages; DELETE FROM scheduled_messages;',
+      `DELETE FROM chats; DELETE FROM contacts; DELETE FROM lid_map; DELETE FROM messages;
+       DELETE FROM scheduled_messages; DELETE FROM reactions; DELETE FROM poll_votes; DELETE FROM chat_labels;
+       DELETE FROM labels; DELETE FROM profile_pics; DELETE FROM calls; DELETE FROM reminders;
+       DELETE FROM campaign_recipients; DELETE FROM campaigns; DELETE FROM list_members; DELETE FROM contact_lists;
+       DELETE FROM opt_outs; DELETE FROM rule_fires;`,
     );
   }
 
@@ -289,24 +514,64 @@ export class Store {
   // --- Chats and contacts ---
 
   upsertChat(chat: ChatUpsert): void {
+    const archived = chat.archived === undefined || chat.archived === null ? null : chat.archived ? 1 : 0;
     this.db
       .prepare(
-        `INSERT INTO chats (id, name, unread_count, last_activity) VALUES (?, ?, ?, ?)
+        `INSERT INTO chats (id, name, unread_count, last_activity, archived, pinned, muted_until)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name = COALESCE(excluded.name, chats.name),
            unread_count = COALESCE(?, chats.unread_count),
-           last_activity = MAX(chats.last_activity, excluded.last_activity)`,
+           last_activity = MAX(chats.last_activity, excluded.last_activity),
+           archived = COALESCE(?, chats.archived),
+           pinned = COALESCE(?, chats.pinned),
+           muted_until = COALESCE(?, chats.muted_until)`,
       )
-      .run(chat.id, chat.name || null, chat.unreadCount ?? 0, chat.lastActivity ?? 0, chat.unreadCount ?? null);
+      .run(
+        chat.id,
+        chat.name || null,
+        chat.unreadCount ?? 0,
+        chat.lastActivity ?? 0,
+        archived ?? 0,
+        chat.pinned ?? 0,
+        chat.mutedUntil ?? 0,
+        chat.unreadCount ?? null,
+        archived,
+        chat.pinned ?? null,
+        chat.mutedUntil ?? null,
+      );
+  }
+
+  /** Whether notifications for a chat are muted right now. */
+  isMuted(chatId: string, now = Date.now()): boolean {
+    const row = this.db.prepare('SELECT muted_until FROM chats WHERE id = ?').get(chatId) as
+      | { muted_until: number }
+      | undefined;
+    const until = row?.muted_until ?? 0;
+    return until === -1 || until > now;
+  }
+
+  hasChat(chatId: string): boolean {
+    return Boolean(this.db.prepare('SELECT 1 FROM chats WHERE id = ?').get(chatId));
   }
 
   deleteChat(id: string): void {
     this.db.prepare('DELETE FROM chats WHERE id = ?').run(id);
     this.db.prepare('DELETE FROM messages WHERE chat_id = ?').run(id);
+    this.db.prepare('DELETE FROM reactions WHERE chat_id = ?').run(id);
+    this.db.prepare('DELETE FROM poll_votes WHERE chat_id = ?').run(id);
+    this.db.prepare('DELETE FROM chat_labels WHERE chat_id = ?').run(id);
   }
 
   incrementUnread(chatId: string): void {
     this.db.prepare('UPDATE chats SET unread_count = unread_count + 1 WHERE id = ?').run(chatId);
+  }
+
+  unreadCount(chatId: string): number {
+    const row = this.db.prepare('SELECT unread_count FROM chats WHERE id = ?').get(chatId) as
+      | { unread_count: number }
+      | undefined;
+    return row?.unread_count ?? 0;
   }
 
   resetUnread(chatId: string): number {
@@ -355,17 +620,36 @@ export class Store {
     return rows.map((r) => r.id);
   }
 
+  /** Saved contacts and people with a chat, by name. */
+  listContacts(): Array<{ id: string; name: string; phone?: string }> {
+    const rows = this.db
+      .prepare(
+        `SELECT q.id, ${NAME_SQL} AS name FROM (
+           SELECT id FROM contacts WHERE id LIKE '%@s.whatsapp.net' AND (name IS NOT NULL OR notify IS NOT NULL)
+           UNION SELECT id FROM chats WHERE id LIKE '%@s.whatsapp.net'
+         ) q
+         LEFT JOIN contacts ct ON ct.id = q.id
+         LEFT JOIN chats c ON c.id = q.id`,
+      )
+      .all() as Array<{ id: string; name: string | null }>;
+    return rows
+      .map((r) => ({ id: r.id, name: r.name || fallbackName(r.id), phone: `+${r.id.split('@')[0]}` }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   listChats(limit = 5000): ChatSummary[] {
     const rows = this.db
       .prepare(
-        `SELECT c.id, ${NAME_SQL} AS name, c.unread_count, c.last_activity,
+        `SELECT c.id, ${NAME_SQL} AS name, c.unread_count, c.last_activity, c.archived, c.pinned, c.muted_until,
+                (SELECT GROUP_CONCAT(label_id) FROM chat_labels WHERE chat_id = c.id) AS labels,
                 m.body, m.kind, m.from_me, m.timestamp
          FROM chats c
          LEFT JOIN contacts ct ON ct.id = c.id
          LEFT JOIN messages m ON m.rowid = (
            SELECT rowid FROM messages WHERE chat_id = c.id ORDER BY timestamp DESC LIMIT 1
          )
-         ORDER BY MAX(COALESCE(m.timestamp, 0), c.last_activity) DESC
+         WHERE c.id != '${STATUS_CHAT}'
+         ORDER BY c.pinned > 0 DESC, c.pinned DESC, MAX(COALESCE(m.timestamp, 0), c.last_activity) DESC
          LIMIT ?`,
       )
       .all(limit) as Array<{
@@ -373,6 +657,10 @@ export class Store {
       name: string | null;
       unread_count: number;
       last_activity: number;
+      archived: number;
+      pinned: number;
+      muted_until: number;
+      labels: string | null;
       body: string | null;
       kind: MessageKind | null;
       from_me: number | null;
@@ -388,6 +676,189 @@ export class Store {
         r.timestamp === null
           ? undefined
           : { body: r.body ?? '', kind: r.kind ?? 'text', fromMe: r.from_me === 1, timestamp: r.timestamp },
+      archived: r.archived === 1,
+      pinned: r.pinned > 0,
+      mutedUntil: r.muted_until,
+      labels: r.labels ? r.labels.split(',').map(Number) : [],
+    }));
+  }
+
+  // --- Labels (kept on this computer; WhatsApp Business labels sync in too) ---
+
+  listLabels(): Label[] {
+    const rows = this.db
+      .prepare(
+        `SELECT l.id, l.name, l.color, (SELECT COUNT(*) FROM chat_labels cl WHERE cl.label_id = l.id) AS count
+         FROM labels l ORDER BY l.name COLLATE NOCASE`,
+      )
+      .all() as unknown as Label[];
+    return rows.map((r) => ({ id: r.id, name: r.name, color: r.color, count: r.count }));
+  }
+
+  saveLabel(label: { id?: number; name: string; color: number; waId?: string }): number {
+    if (label.id) {
+      this.db.prepare('UPDATE labels SET name = ?, color = ? WHERE id = ?').run(label.name, label.color, label.id);
+      return label.id;
+    }
+    if (label.waId) {
+      this.db
+        .prepare(
+          `INSERT INTO labels (name, color, wa_id) VALUES (?, ?, ?)
+           ON CONFLICT(wa_id) DO UPDATE SET name = excluded.name, color = excluded.color`,
+        )
+        .run(label.name, label.color, label.waId);
+      return (this.db.prepare('SELECT id FROM labels WHERE wa_id = ?').get(label.waId) as { id: number }).id;
+    }
+    return Number(this.db.prepare('INSERT INTO labels (name, color) VALUES (?, ?)').run(label.name, label.color).lastInsertRowid);
+  }
+
+  deleteLabel(id: number): void {
+    this.db.prepare('DELETE FROM chat_labels WHERE label_id = ?').run(id);
+    this.db.prepare('DELETE FROM labels WHERE id = ?').run(id);
+  }
+
+  labelIdForWa(waId: string): number | undefined {
+    const row = this.db.prepare('SELECT id FROM labels WHERE wa_id = ?').get(waId) as { id: number } | undefined;
+    return row?.id;
+  }
+
+  setChatLabel(chatId: string, labelId: number, on: boolean): void {
+    if (on) this.db.prepare('INSERT OR IGNORE INTO chat_labels (chat_id, label_id) VALUES (?, ?)').run(chatId, labelId);
+    else this.db.prepare('DELETE FROM chat_labels WHERE chat_id = ? AND label_id = ?').run(chatId, labelId);
+  }
+
+  // --- Profile pictures ---
+
+  getProfilePic(id: string): { file: string | null; fetchedAt: number } | undefined {
+    const row = this.db.prepare('SELECT file, fetched_at FROM profile_pics WHERE id = ?').get(id) as
+      | { file: string | null; fetched_at: number }
+      | undefined;
+    return row && { file: row.file, fetchedAt: row.fetched_at };
+  }
+
+  setProfilePic(id: string, file: string | null, fetchedAt = Date.now()): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO profile_pics (id, file, fetched_at) VALUES (?, ?, ?)')
+      .run(id, file, fetchedAt);
+  }
+
+  /** Marks a picture as out of date so it's fetched again next time it's shown. */
+  expireProfilePic(id: string): void {
+    this.db.prepare('UPDATE profile_pics SET fetched_at = 0 WHERE id = ?').run(id);
+  }
+
+  // --- Call log ---
+
+  upsertCall(call: {
+    id: string;
+    chatId: string;
+    fromMe?: boolean;
+    isVideo?: boolean;
+    isGroup?: boolean;
+    status: CallStatus;
+    startedAt: number;
+    endedAt?: number;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO calls (id, chat_id, from_me, is_video, is_group, status, started_at, ended_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           status = CASE WHEN calls.status IN ('auto-rejected') THEN calls.status ELSE excluded.status END,
+           is_video = MAX(calls.is_video, excluded.is_video),
+           ended_at = COALESCE(excluded.ended_at, calls.ended_at)`,
+      )
+      .run(
+        call.id,
+        call.chatId,
+        call.fromMe ? 1 : 0,
+        call.isVideo ? 1 : 0,
+        call.isGroup ? 1 : 0,
+        call.status,
+        call.startedAt,
+        call.endedAt ?? null,
+      );
+  }
+
+  getCall(id: string): { status: CallStatus; startedAt: number } | undefined {
+    const row = this.db.prepare('SELECT status, started_at FROM calls WHERE id = ?').get(id) as
+      | { status: CallStatus; started_at: number }
+      | undefined;
+    return row && { status: row.status, startedAt: row.started_at };
+  }
+
+  listCalls(limit = 500): CallRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT k.*, ${NAME_SQL} AS name FROM calls k
+         LEFT JOIN chats c ON c.id = k.chat_id
+         LEFT JOIN contacts ct ON ct.id = k.chat_id
+         ORDER BY k.started_at DESC LIMIT ?`,
+      )
+      .all(limit) as Array<{
+      id: string;
+      chat_id: string;
+      from_me: number;
+      is_video: number;
+      is_group: number;
+      status: CallStatus;
+      started_at: number;
+      ended_at: number | null;
+      name: string | null;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      chatId: r.chat_id,
+      chatName: r.name || fallbackName(r.chat_id),
+      fromMe: r.from_me === 1,
+      isVideo: r.is_video === 1,
+      isGroup: r.is_group === 1,
+      status: r.status,
+      startedAt: r.started_at,
+      endedAt: r.ended_at ?? undefined,
+    }));
+  }
+
+  // --- Search ---
+
+  /** Full-text search over message text, newest first. */
+  searchMessages(query: string, chatId?: string, limit = 100): SearchResult[] {
+    const match = ftsQuery(query);
+    if (!match) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT m.chat_id, m.id, m.from_me, m.kind, m.timestamp, m.author,
+                snippet(messages_fts, 0, char(2), char(3), '…', 14) AS snippet,
+                ${NAME_SQL} AS chat_name, COALESCE(au.name, au.notify, m.author_name) AS author_name
+         FROM messages_fts
+         JOIN messages m ON m.rowid = messages_fts.rowid
+         LEFT JOIN chats c ON c.id = m.chat_id
+         LEFT JOIN contacts ct ON ct.id = m.chat_id
+         LEFT JOIN contacts au ON au.id = m.author
+         WHERE messages_fts MATCH ? AND m.kind != 'deleted' AND m.chat_id != '${STATUS_CHAT}'
+           AND (? IS NULL OR m.chat_id = ?)
+         ORDER BY m.timestamp DESC LIMIT ?`,
+      )
+      .all(match, chatId ?? null, chatId ?? null, limit) as Array<{
+      chat_id: string;
+      id: string;
+      from_me: number;
+      kind: MessageKind;
+      timestamp: number;
+      author: string | null;
+      snippet: string;
+      chat_name: string | null;
+      author_name: string | null;
+    }>;
+    return rows.map((r) => ({
+      chatId: r.chat_id,
+      chatName: r.chat_name || fallbackName(r.chat_id),
+      messageId: r.id,
+      fromMe: r.from_me === 1,
+      authorName: r.author_name ?? undefined,
+      kind: r.kind,
+      timestamp: r.timestamp,
+      snippet: r.snippet,
     }));
   }
 
@@ -398,8 +869,9 @@ export class Store {
     this.db
       .prepare(
         `INSERT INTO messages (chat_id, id, from_me, author, author_name, kind, body, timestamp, ack,
-                               raw, mime, file_name, file_size, seconds, ptt, thumb, width, height)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               raw, mime, file_name, file_size, seconds, ptt, thumb, width, height,
+                               quoted, forwarded, extra)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(chat_id, id) DO UPDATE SET
            body = CASE WHEN messages.kind = 'deleted' THEN messages.body ELSE excluded.body END,
            kind = CASE WHEN messages.kind = 'deleted' THEN messages.kind ELSE excluded.kind END,
@@ -414,7 +886,10 @@ export class Store {
            ptt = COALESCE(excluded.ptt, messages.ptt),
            thumb = COALESCE(excluded.thumb, messages.thumb),
            width = COALESCE(excluded.width, messages.width),
-           height = COALESCE(excluded.height, messages.height)`,
+           height = COALESCE(excluded.height, messages.height),
+           quoted = COALESCE(excluded.quoted, messages.quoted),
+           forwarded = MAX(excluded.forwarded, messages.forwarded),
+           extra = COALESCE(excluded.extra, messages.extra)`,
       )
       .run(
         m.chatId,
@@ -435,8 +910,60 @@ export class Store {
         media?.thumb ?? null,
         media?.width ?? null,
         media?.height ?? null,
+        m.quoted ? JSON.stringify(m.quoted) : null,
+        m.forwarded ? 1 : 0,
+        m.extra ? JSON.stringify(m.extra) : null,
       );
     this.upsertChat({ id: m.chatId, lastActivity: m.timestamp });
+  }
+
+  /** Records a reaction; an empty emoji removes it. Sender is a WhatsApp ID, or ME. */
+  setReaction(chatId: string, messageId: string, sender: string, emoji: string, timestamp: number): void {
+    if (!emoji) {
+      this.db.prepare('DELETE FROM reactions WHERE chat_id = ? AND message_id = ? AND sender = ?').run(chatId, messageId, sender);
+      return;
+    }
+    this.db
+      .prepare(
+        `INSERT INTO reactions (chat_id, message_id, sender, emoji, timestamp) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(chat_id, message_id, sender) DO UPDATE SET emoji = excluded.emoji, timestamp = excluded.timestamp
+         WHERE excluded.timestamp >= reactions.timestamp`,
+      )
+      .run(chatId, messageId, sender, emoji, timestamp);
+  }
+
+  /** Records someone's poll vote (the option names they picked; empty to retract). */
+  setPollVote(chatId: string, messageId: string, voter: string, options: string[], timestamp: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO poll_votes (chat_id, message_id, voter, options, timestamp) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(chat_id, message_id, voter) DO UPDATE SET options = excluded.options, timestamp = excluded.timestamp
+         WHERE excluded.timestamp >= poll_votes.timestamp`,
+      )
+      .run(chatId, messageId, voter, JSON.stringify(options), timestamp);
+  }
+
+  /** Status updates from the last 24 hours, oldest first. */
+  listStatuses(now = Date.now()): ChatMessage[] {
+    const rows = this.db
+      .prepare(
+        `SELECT m.*, COALESCE(ct.name, ct.notify) AS contact_name
+         FROM messages m LEFT JOIN contacts ct ON ct.id = m.author
+         WHERE m.chat_id = ? AND m.timestamp > ? AND m.kind != 'deleted'
+         ORDER BY m.timestamp ASC`,
+      )
+      .all(STATUS_CHAT, Math.floor(now / 1000) - STATUS_LIFETIME_S) as unknown as MessageRow[];
+    return rows.map((r) => this.toMessage(r, false));
+  }
+
+  /** Deletes status updates older than a day, with their downloaded files. Returns the file names. */
+  pruneStatuses(now = Date.now()): string[] {
+    const cutoff = Math.floor(now / 1000) - STATUS_LIFETIME_S;
+    const files = this.db
+      .prepare('SELECT local_file FROM messages WHERE chat_id = ? AND timestamp <= ? AND local_file IS NOT NULL')
+      .all(STATUS_CHAT, cutoff) as Array<{ local_file: string }>;
+    this.db.prepare('DELETE FROM messages WHERE chat_id = ? AND timestamp <= ?').run(STATUS_CHAT, cutoff);
+    return files.map((f) => f.local_file);
   }
 
   updateAck(chatId: string, messageId: string, ack: MessageAck): void {
@@ -461,6 +988,14 @@ export class Store {
     return this.getMessage(chatId, messageId);
   }
 
+  /** Deletes a message from this computer. Returns its downloaded file name, if any. */
+  removeMessage(chatId: string, messageId: string): string | undefined {
+    const file = this.getLocalFile(chatId, messageId);
+    this.db.prepare('DELETE FROM messages WHERE chat_id = ? AND id = ?').run(chatId, messageId);
+    this.db.prepare('DELETE FROM reactions WHERE chat_id = ? AND message_id = ?').run(chatId, messageId);
+    return file;
+  }
+
   getMessage(chatId: string, messageId: string): StoredMessage | undefined {
     const row = this.db
       .prepare(
@@ -469,7 +1004,7 @@ export class Store {
          WHERE m.chat_id = ? AND m.id = ?`,
       )
       .get(chatId, messageId) as MessageRow | undefined;
-    return row ? this.toMessage(row, true) : undefined;
+    return row ? this.decorate(chatId, [this.toMessage(row, true)])[0] : undefined;
   }
 
   /** Replaces the stored WhatsApp payload, e.g. after the phone re-uploaded expired media. */
@@ -500,7 +1035,76 @@ export class Store {
          ) ORDER BY timestamp ASC`,
       )
       .all(chatId, before ?? Number.MAX_SAFE_INTEGER, limit) as unknown as MessageRow[];
-    return rows.map((r) => this.toMessage(r, false));
+    return this.decorate(chatId, rows.map((r) => this.toMessage(r, false)));
+  }
+
+  /** About `half` messages before and after one message, oldest first. */
+  messagesAround(chatId: string, messageId: string, half = 50): ChatMessage[] {
+    const target = this.db
+      .prepare('SELECT timestamp, rowid FROM messages WHERE chat_id = ? AND id = ?')
+      .get(chatId, messageId) as { timestamp: number } | undefined;
+    if (!target) return this.listMessages(chatId);
+    const select = `SELECT m.*, COALESCE(ct.name, ct.notify) AS contact_name
+                    FROM messages m LEFT JOIN contacts ct ON ct.id = m.author WHERE m.chat_id = ?`;
+    const before = this.db
+      .prepare(`${select} AND m.timestamp < ? ORDER BY m.timestamp DESC LIMIT ?`)
+      .all(chatId, target.timestamp, half) as unknown as MessageRow[];
+    const after = this.db
+      .prepare(`${select} AND m.timestamp >= ? ORDER BY m.timestamp ASC LIMIT ?`)
+      .all(chatId, target.timestamp, half) as unknown as MessageRow[];
+    const rows = [...before.reverse(), ...after];
+    return this.decorate(chatId, rows.map((r) => this.toMessage(r, false)));
+  }
+
+  /** Adds reactions and poll results to messages of one chat. */
+  private decorate<T extends ChatMessage>(chatId: string, messages: T[]): T[] {
+    if (messages.length === 0) return messages;
+    const ids = messages.map((m) => m.id);
+    const placeholders = ids.map(() => '?').join(', ');
+    const reactions = this.db
+      .prepare(
+        `SELECT message_id, emoji, COUNT(*) AS n, MAX(sender = '${ME}') AS mine, MIN(timestamp) AS first
+         FROM reactions WHERE chat_id = ? AND message_id IN (${placeholders})
+         GROUP BY message_id, emoji ORDER BY first`,
+      )
+      .all(chatId, ...ids) as Array<{ message_id: string; emoji: string; n: number; mine: number }>;
+    const byMessage = new Map<string, ChatMessage['reactions']>();
+    for (const r of reactions) {
+      const list = byMessage.get(r.message_id) ?? [];
+      list.push({ emoji: r.emoji, count: r.n, mine: r.mine === 1 });
+      byMessage.set(r.message_id, list);
+    }
+    const polls = messages.filter((m) => m.poll);
+    const votes = polls.length
+      ? (this.db
+          .prepare(
+            `SELECT v.message_id, v.voter, v.options, COALESCE(ct.name, ct.notify) AS name
+             FROM poll_votes v LEFT JOIN contacts ct ON ct.id = v.voter
+             WHERE v.chat_id = ? AND v.message_id IN (${polls.map(() => '?').join(', ')})`,
+          )
+          .all(chatId, ...polls.map((p) => p.id)) as Array<{ message_id: string; voter: string; options: string; name: string | null }>)
+      : [];
+    for (const m of messages) {
+      const list = byMessage.get(m.id);
+      if (list) m.reactions = list;
+      if (m.poll) {
+        const mine = votes.filter((v) => v.message_id === m.id);
+        let voters = 0;
+        for (const v of mine) {
+          const picked = safeJson<string[]>(v.options) ?? [];
+          if (picked.length > 0) voters++;
+          const who = v.voter === ME ? 'You' : v.name || fallbackName(v.voter);
+          for (const option of m.poll.options) {
+            if (!picked.includes(option.name)) continue;
+            option.count++;
+            option.voters.push(who);
+            if (v.voter === ME) option.mine = true;
+          }
+        }
+        m.poll.totalVoters = voters;
+      }
+    }
+    return messages;
   }
 
   private toMessage(r: MessageRow, includeRaw: true): StoredMessage;
@@ -517,7 +1121,28 @@ export class Store {
       timestamp: r.timestamp,
       ack: r.ack ?? undefined,
       edited: r.edited === 1 || undefined,
+      forwarded: r.forwarded === 1 || undefined,
     };
+    if (r.quoted) {
+      const quoted = safeJson<QuotedMessage>(r.quoted);
+      if (quoted) {
+        if (quoted.author && !quoted.fromMe) quoted.authorName = this.contactName(quoted.author) ?? quoted.authorName;
+        message.quoted = quoted;
+      }
+    }
+    const extra = r.extra ? safeJson<MessageExtra>(r.extra) : undefined;
+    if (extra?.poll) {
+      message.poll = {
+        selectableCount: extra.poll.selectableCount,
+        totalVoters: 0,
+        options: extra.poll.options.map((name) => ({ name, count: 0, voters: [], mine: false })),
+      };
+    }
+    if (extra?.location) {
+      const { thumb, ...location } = extra.location;
+      message.location = { ...location, thumb: thumb ? `data:image/jpeg;base64,${thumb}` : undefined };
+    }
+    if (extra?.contacts) message.contacts = extra.contacts;
     if (MEDIA_KINDS.has(r.kind)) {
       const media: MediaInfo = {
         mimetype: r.mime ?? undefined,
@@ -534,6 +1159,7 @@ export class Store {
       message.media = media;
     }
     if (includeRaw && r.raw) message.raw = r.raw;
+    if (includeRaw && extra) message.extra = extra;
     return message;
   }
 
@@ -715,6 +1341,29 @@ export class Store {
       .all(now) as unknown as ScheduledRow[];
     return rows.map(toDue);
   }
+}
+
+function safeJson<T>(text: string): T | undefined {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Turns what the user typed into an FTS5 query: every word must appear, and the last word
+ * may be the start of a longer one ("hel wor" finds "hello world").
+ */
+export function ftsQuery(input: string): string {
+  const words = input
+    .normalize('NFKC')
+    .split(/[\s\p{P}]+/u)
+    .map((w) => w.trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  if (words.length === 0) return '';
+  return words.map((w, i) => `"${w.replaceAll('"', '""')}"${i === words.length - 1 ? '*' : ''}`).join(' ');
 }
 
 function parseRule(r: Pick<ScheduledRow, 'rule' | 'repeat'>): RepeatRule {

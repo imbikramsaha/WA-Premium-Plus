@@ -15,7 +15,8 @@ const ALLOWED_PERMISSIONS = new Set([
   'mediaKeySystem',
 ]);
 
-let callsWindow: BrowserWindow | null = null;
+/** One WhatsApp Web window per account, each with its own login. */
+const callsWindows = new Map<string, BrowserWindow>();
 
 function isWhatsApp(url: string): boolean {
   try {
@@ -38,12 +39,17 @@ function chromeUserAgent(): string {
   return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
 }
 
-let sessionConfigured = false;
+const configured = new Set<string>();
 
-function configureSession(): Electron.Session {
-  const ses = session.fromPartition(PARTITION);
-  if (sessionConfigured) return ses;
-  sessionConfigured = true;
+function partitionFor(accountId: string): string {
+  return accountId === 'main' ? PARTITION : `${PARTITION}-${accountId}`;
+}
+
+function configureSession(accountId: string): Electron.Session {
+  const partition = partitionFor(accountId);
+  const ses = session.fromPartition(partition);
+  if (configured.has(partition)) return ses;
+  configured.add(partition);
   ses.setUserAgent(chromeUserAgent());
   ses.setPermissionRequestHandler((_wc, permission, callback, details) => {
     callback(ALLOWED_PERMISSIONS.has(permission) && isWhatsApp(details.requestingUrl));
@@ -58,12 +64,19 @@ function urlFor(chatId?: string): string {
   return user && /^\d+$/.test(user) ? `${HOME}send?phone=${user}` : HOME;
 }
 
-export async function openCallsWindow(icon: string, chatId?: string): Promise<void> {
-  if (callsWindow) {
-    if (callsWindow.isMinimized()) callsWindow.restore();
-    callsWindow.show();
-    callsWindow.focus();
-    if (chatId) await callsWindow.loadURL(urlFor(chatId));
+/** Removes an account's WhatsApp Web login (when the account is removed from the app). */
+export async function clearCallsSession(accountId: string): Promise<void> {
+  callsWindows.get(accountId)?.destroy();
+  await session.fromPartition(partitionFor(accountId)).clearStorageData().catch(() => undefined);
+}
+
+export async function openCallsWindow(icon: string, chatId?: string, accountId = 'main', title = 'Calls · WhatsApp Web'): Promise<void> {
+  const existing = callsWindows.get(accountId);
+  if (existing) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    if (chatId) await existing.loadURL(urlFor(chatId));
     return;
   }
 
@@ -78,19 +91,19 @@ export async function openCallsWindow(icon: string, chatId?: string): Promise<vo
     height: 800,
     minWidth: 760,
     minHeight: 520,
-    title: 'Calls · WhatsApp Web',
+    title,
     icon,
     autoHideMenuBar: true,
     webPreferences: {
-      session: configureSession(),
+      session: configureSession(accountId),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
     },
   });
-  callsWindow = win;
+  callsWindows.set(accountId, win);
   win.on('closed', () => {
-    if (callsWindow === win) callsWindow = null;
+    if (callsWindows.get(accountId) === win) callsWindows.delete(accountId);
   });
   win.on('page-title-updated', (e) => e.preventDefault());
 

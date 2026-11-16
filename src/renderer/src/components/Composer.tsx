@@ -1,8 +1,21 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { OutgoingFile } from '../../../shared/types';
-import { errorMessage, formatBytes, formatDuration } from '../format';
+import type { ChatMessage, OutgoingFile } from '../../../shared/types';
+import { errorMessage, formatBytes, formatDuration, formatId, messagePreview } from '../format';
 import { useVoiceRecorder } from '../useVoiceRecorder';
-import { ClockIcon, CloseIcon, FileIcon, MicIcon, PaperclipIcon, SendIcon, TrashIcon } from './Icons';
+import {
+  ClockIcon,
+  CloseIcon,
+  ContactIcon,
+  FileIcon,
+  MapPinIcon,
+  MicIcon,
+  PaperclipIcon,
+  PollIcon,
+  ReplyIcon,
+  SendIcon,
+  TrashIcon,
+} from './Icons';
+import { Menu, useMenu } from './Menu';
 
 export interface PendingFile {
   key: string;
@@ -15,6 +28,7 @@ export interface PendingFile {
 
 export interface ComposerHandle {
   addFiles(files: File[]): void;
+  focus(): void;
 }
 
 let nextKey = 0;
@@ -34,10 +48,17 @@ export const Composer = forwardRef<
   {
     chatId: string;
     connected: boolean;
+    /** Channels you follow: no composer, just a note. */
+    readOnly?: boolean;
+    /** The message being replied to. */
+    replyTo?: ChatMessage | null;
+    onCancelReply?: () => void;
     /** Opens the schedule dialog with the current text and first attached file. */
     onSchedule: (body: string, attachmentPath: string | undefined, clear: () => void) => void;
+    /** Opens the dialog for sending a poll, location or contact card. */
+    onShare?: (kind: 'poll' | 'location' | 'contact') => void;
   }
->(function Composer({ chatId, connected, onSchedule }, ref) {
+>(function Composer({ chatId, connected, readOnly, replyTo, onCancelReply, onSchedule, onShare }, ref) {
   const [text, setText] = useState('');
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [sending, setSending] = useState(false);
@@ -45,13 +66,14 @@ export const Composer = forwardRef<
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const voice = useVoiceRecorder();
+  const { menu, close: closeMenu, openUnder } = useMenu();
 
   function addFiles(list: File[]) {
     if (list.length === 0) return;
     void Promise.all(list.map(toPending)).then((pending) => setFiles((prev) => [...prev, ...pending].slice(0, 30)));
   }
 
-  useImperativeHandle(ref, () => ({ addFiles }));
+  useImperativeHandle(ref, () => ({ addFiles, focus: () => inputRef.current?.focus() }));
 
   function clear() {
     setText('');
@@ -84,19 +106,24 @@ export const Composer = forwardRef<
     setError(null);
     try {
       if (files.length === 0) {
-        await window.wapp.sendText(chatId, body);
+        await window.wapp.sendText(chatId, body, replyTo?.id);
       } else {
         for (const [i, f] of files.entries()) {
           await window.wapp.sendFile(chatId, f.file, i === 0 ? body : undefined);
         }
       }
       clear();
+      onCancelReply?.();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setSending(false);
       inputRef.current?.focus();
     }
+  }
+
+  if (readOnly) {
+    return <footer className="composer readonly">You follow this channel. Only its admins can post here.</footer>;
   }
 
   async function finishVoice() {
@@ -127,6 +154,18 @@ export const Composer = forwardRef<
   return (
     <>
       {error && <div className="composer-error">{error}</div>}
+      {replyTo && (
+        <div className="reply-bar">
+          <ReplyIcon size={16} />
+          <div className="reply-bar-text">
+            <strong>{replyTo.fromMe ? 'Replying to yourself' : `Replying to ${replyTo.authorName || formatId(replyTo.author || replyTo.chatId)}`}</strong>
+            <span>{messagePreview(replyTo)}</span>
+          </div>
+          <button className="icon-button tiny" title="Cancel reply" onClick={onCancelReply}>
+            <CloseIcon size={14} />
+          </button>
+        </div>
+      )}
       {files.length > 0 && (
         <div className="attachment-tray">
           {files.map((f) => (
@@ -162,7 +201,22 @@ export const Composer = forwardRef<
           </>
         ) : (
           <>
-            <button className="icon-button" title="Attach photos, videos or documents" onClick={() => fileInput.current?.click()}>
+            <button
+              className="icon-button"
+              title="Attach"
+              onClick={(e) =>
+                openUnder(
+                  e.currentTarget,
+                  [
+                    { label: 'Photos, videos & files', icon: <PaperclipIcon size={15} />, onClick: () => fileInput.current?.click() },
+                    { label: 'Poll', icon: <PollIcon size={15} />, onClick: () => onShare?.('poll'), disabled: !connected },
+                    { label: 'Location', icon: <MapPinIcon size={15} />, onClick: () => onShare?.('location'), disabled: !connected },
+                    { label: 'Contact', icon: <ContactIcon size={15} />, onClick: () => onShare?.('contact'), disabled: !connected },
+                  ],
+                  'left',
+                )
+              }
+            >
               <PaperclipIcon />
             </button>
             <input
@@ -216,6 +270,7 @@ export const Composer = forwardRef<
           </>
         )}
       </footer>
+      {menu && <Menu {...menu} y={menu.y - 190} onClose={closeMenu} />}
     </>
   );
 });

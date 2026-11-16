@@ -1,12 +1,11 @@
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, Menu, nativeTheme, net, Notification, protocol, shell, Tray } from 'electron';
-import type { AppEvent } from '../shared/types';
+import type { AppEvent, ChatMessage } from '../shared/types';
+import type { AccountHost } from './account';
+import { Accounts } from './accounts';
 import { openCallsWindow } from './calls';
 import { registerIpc } from './ipc';
-import { Scheduler } from './scheduler';
-import { Store } from './store';
-import { WhatsApp } from './whatsapp';
 
 const APP_NAME = 'WA Premium Plus';
 const resourcesDir = app.isPackaged
@@ -130,6 +129,24 @@ function startedHidden(): boolean {
   return process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin;
 }
 
+function messageText(message: ChatMessage): string {
+  if (message.body) return message.body;
+  switch (message.kind) {
+    case 'text':
+      return 'New message';
+    case 'audio':
+      return 'Sent a voice message';
+    case 'poll':
+      return 'Sent a poll';
+    case 'location':
+      return 'Shared a location';
+    case 'contact':
+      return 'Shared a contact';
+    default:
+      return `Sent a ${message.kind}`;
+  }
+}
+
 function main(): void {
   app.setName(APP_NAME);
   // WAPP_DATA_DIR lets developers run a separate profile (for example a test account).
@@ -145,60 +162,80 @@ function main(): void {
   if (process.platform === 'win32') app.setAppUserModelId('com.wapremiumplus.app');
 
   const dataDir = app.getPath('userData');
-  const mediaDir = join(dataDir, 'media');
-  const attachmentsDir = join(dataDir, 'attachments');
-  const store = new Store(join(dataDir, 'wapp.db'));
+  let accountsTimer: NodeJS.Timeout | undefined;
+  const accountsChanged = () => {
+    clearTimeout(accountsTimer);
+    accountsTimer = setTimeout(() => send({ type: 'accounts-changed' }), 400);
+  };
 
-  let scheduler: Scheduler | null = null;
-  const whatsapp = new WhatsApp({
-    authDir: join(dataDir, 'auth'),
-    mediaDir,
+  // eslint-disable-next-line prefer-const
+  let accounts: Accounts;
+  const host: AccountHost = {
     tempDir: join(app.getPath('temp'), 'wa-premium-plus'),
-    store,
     offline: process.env.WAPP_OFFLINE === '1',
-    emit: (event) => {
-      send(event);
-      if (event.type === 'connection' && event.state.status === 'open') scheduler?.poke();
+    emit(accountId, event) {
+      if (event.type === 'connection' || event.type === 'chats-changed') {
+        if (event.type === 'connection' && event.state.status === 'open') accounts?.remember(accountId);
+        accountsChanged();
+      }
+      if (accounts && accountId === accounts.activeId) send(event);
     },
-    onIncoming: (message, chatName) => {
-      if (mainWindow?.isFocused() || !Notification.isSupported()) return;
+    notify(accountId, message, chatName) {
+      const focusedOnIt = mainWindow?.isFocused() && accounts.activeId === accountId;
+      if (focusedOnIt || !Notification.isSupported()) return;
+      const label = accounts.labelFor(accountId);
       const notification = new Notification({
-        title: chatName,
-        body: message.body || (message.kind === 'text' ? 'New message' : `Sent ${message.kind === 'audio' ? 'a voice message' : `a ${message.kind}`}`),
+        title: label ? `${chatName} · ${label}` : chatName,
+        body: messageText(message),
       });
-      notification.on('click', showWindow);
+      notification.on('click', () => {
+        if (accounts.activeId !== accountId) {
+          accounts.switchTo(accountId);
+          send({ type: 'account-switched' });
+        }
+        showWindow();
+      });
       notification.show();
     },
-  });
-  scheduler = new Scheduler(store, whatsapp, () => send({ type: 'scheduled-changed' }));
+  };
+  accounts = new Accounts(dataDir, host);
 
   registerIpc({
-    store,
-    whatsapp,
-    scheduler,
-    attachmentsDir,
-    mediaDir,
-    onScheduledChanged: () => send({ type: 'scheduled-changed' }),
-    openCallsWindow: (chatId) => openCallsWindow(join(resourcesDir, 'icon.png'), chatId),
+    accounts,
+    onAccountsChanged: accountsChanged,
+    onAccountSwitched: () => {
+      send({ type: 'account-switched' });
+      accountsChanged();
+    },
+    openCallsWindow: (account, chatId) =>
+      openCallsWindow(
+        join(resourcesDir, 'icon.png'),
+        chatId,
+        account.id,
+        accounts.labelFor(account.id) ? `Calls · ${accounts.labelFor(account.id)} · WhatsApp Web` : undefined,
+      ),
   });
 
   void app.whenReady().then(() => {
+    // wapp-media://<account>/<media|avatar>/<file>
     protocol.handle('wapp-media', (request) => {
-      const name = basename(decodeURIComponent(new URL(request.url).pathname));
-      return net.fetch(pathToFileURL(join(mediaDir, name)).toString(), { headers: request.headers });
+      const url = new URL(request.url);
+      const [area = '', ...rest] = url.pathname.split('/').filter(Boolean);
+      const folder = accounts.get(url.hostname)?.folderFor(area);
+      if (!folder || rest.length === 0) return new Response(null, { status: 404 });
+      const name = basename(decodeURIComponent(rest.join('/')));
+      return net.fetch(pathToFileURL(join(folder, name)).toString(), { headers: request.headers });
     });
     createWindow(!startedHidden());
     createTray();
-    void whatsapp.start();
-    scheduler?.start();
+    accounts.startAll();
 
     app.on('activate', showWindow);
   });
 
   app.on('before-quit', () => {
     quitting = true;
-    scheduler?.stop();
-    whatsapp.stop();
+    accounts.stopAll();
   });
 
   // Keep running in the tray when every window is closed.
