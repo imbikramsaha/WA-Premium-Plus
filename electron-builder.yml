@@ -1,0 +1,44 @@
+appId: com.wapremiumplus.app
+productName: WA Premium Plus
+copyright: Copyright © 2026 WA Premium Plus contributors
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - '!**/.vscode/*'
+  - '!{src,scripts,tests,docs,assets,resources,release,.github}/**'
+  - '!{electron.vite.config.ts,electron-builder.yml,tsconfig.node.json,tsconfig.web.json}'
+  - '!{README.md,CONTRIBUTING.md,.gitignore,.env,.env.*}'
+
+# Tray and window icons, loaded from process.resourcesPath at runtime.
+extraResources:
+  - from: resources
+    to: resources
+
+mac:
+  icon: build/icon-mac.png
+  category: public.app-category.social-networking
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  icon: build/icon.png
+  category: Network
+  target:
+    - target: AppImage
+      arch: [x64]
+
+publish: null
