@@ -83,6 +83,8 @@ export class WhatsApp {
   /** Recently sent messages, so Baileys can re-send them if a recipient asks for a retry. */
   private readonly sentCache = new Map<string, proto.IMessage>();
   private readonly downloads = new Map<string, Promise<string>>();
+  /** Chats we already asked the phone to re-send this session. */
+  private readonly historyRequested = new Set<string>();
   private readonly opts: WhatsAppOptions;
 
   constructor(opts: WhatsAppOptions) {
@@ -237,6 +239,27 @@ export class WhatsApp {
     return name;
   }
 
+  /**
+   * Messages synced by older versions of the app lack the keys needed to download their
+   * media. Ask the phone to re-send the chat's recent history (once per chat per session);
+   * the copies it sends include the keys, and they merge into the stored messages.
+   * Returns true if a request was sent.
+   */
+  async refreshChatMedia(chatId: string): Promise<boolean> {
+    const sock = this.sock;
+    if (!sock || !this.isOpen || this.historyRequested.has(chatId)) return false;
+    if (this.opts.store.countUnavailableMedia(chatId) === 0) return false;
+    const newest = this.opts.store.newestMessage(chatId);
+    if (!newest) return false;
+    this.historyRequested.add(chatId);
+    await sock.fetchMessageHistory(
+      50,
+      { remoteJid: chatId, id: newest.id, fromMe: newest.fromMe, participant: newest.author },
+      newest.timestamp * 1000,
+    );
+    return true;
+  }
+
   // --- Chats and groups ---
 
   /** Clears the unread badge and sends read receipts for the latest incoming messages. */
@@ -367,13 +390,15 @@ export class WhatsApp {
     sock.ev.on('connection.update', (update) => {
       if (current()) void this.onConnectionUpdate(sock, update);
     });
-    sock.ev.on('messaging-history.set', ({ chats, contacts, messages, lidPnMappings }) => {
+    sock.ev.on('messaging-history.set', ({ chats, contacts, messages, lidPnMappings, syncType }) => {
       if (!current()) return;
+      // History we asked for (to recover media keys) updates messages that may be on screen.
+      const onDemand = syncType === proto.HistorySync.HistorySyncType.ON_DEMAND;
       store.transaction(() => {
         for (const { lid, pn } of lidPnMappings ?? []) store.saveLidMapping(jidNormalizedUser(lid), jidNormalizedUser(pn));
         this.saveContacts(contacts);
         this.saveChats(chats);
-        for (const raw of messages) this.applyMessage(raw, false);
+        for (const raw of messages) this.applyMessage(raw, onDemand);
       });
       emit({ type: 'chats-changed' });
       this.scheduleLidResolution();

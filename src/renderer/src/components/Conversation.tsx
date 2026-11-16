@@ -79,6 +79,8 @@ export function Conversation({
       if (!active) return;
       setMessages(list);
       setHasOlder(list.length >= 100);
+      // Older media may lack download keys; ask the phone to send them again.
+      if (list.some((m) => m.media && !m.media.downloadable)) void window.wapp.refreshChatMedia(chat.id);
     });
     if (userIsLooking()) void window.wapp.markRead(chat.id);
 
@@ -137,6 +139,7 @@ export function Conversation({
   }
 
   const isPerson = chat.id.endsWith('@s.whatsapp.net');
+  const isChannel = chat.id.endsWith('@newsletter');
 
   return (
     <div className="conversation-wrap">
@@ -158,7 +161,7 @@ export function Conversation({
             <Avatar id={chat.id} name={chat.name} size={40} />
             <div className="conversation-title">
               <strong>{chat.name}</strong>
-              <span>{chat.isGroup ? 'Group · click for info' : formatId(chat.id)}</span>
+              <span>{chat.isGroup ? 'Group · click for info' : isChannel ? 'Channel' : formatId(chat.id)}</span>
             </div>
           </button>
           {isPerson && (

@@ -17,6 +17,7 @@ const api: WappApi = {
   sendVoiceNote: (chatId, webm, seconds, waveform) => invoke('sendVoiceNote', chatId, webm, seconds, waveform),
   requestMicrophone: () => invoke('requestMicrophone'),
 
+  refreshChatMedia: (chatId) => invoke('refreshChatMedia', chatId),
   downloadMedia: (chatId, messageId) => invoke('downloadMedia', chatId, messageId),
   openMedia: (chatId, messageId) => invoke('openMedia', chatId, messageId),
   saveMedia: (chatId, messageId) => invoke('saveMedia', chatId, messageId),

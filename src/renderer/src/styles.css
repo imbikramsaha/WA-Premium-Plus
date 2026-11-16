@@ -77,6 +77,7 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 body {
@@ -360,12 +361,20 @@ textarea {
 
 .layout {
   height: 100%;
+  overflow: hidden;
   display: grid;
-  grid-template-columns: 64px 340px 1fr;
+  grid-template-columns: 64px 340px minmax(0, 1fr);
+  /* One row exactly as tall as the window. Without this the row grows to fit every chat
+     in the list, and the page scrolls instead of the list. */
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.layout > * {
+  min-height: 0;
 }
 
 .layout.view-scheduled {
-  grid-template-columns: 64px 1fr;
+  grid-template-columns: 64px minmax(0, 1fr);
 }
 
 .rail {
@@ -1561,4 +1570,24 @@ textarea {
   top: 16px;
   right: 16px;
   color: #fff;
+}
+
+.media-unavailable {
+  display: grid;
+  gap: 2px;
+  min-width: 220px;
+  margin: 0 -4px 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+}
+
+.media-unavailable span {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.media-unavailable small {
+  font-size: 12px;
 }

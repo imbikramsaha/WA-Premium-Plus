@@ -53,14 +53,26 @@ export function MediaView({ message, onOpenImage }: { message: ChatMessage; onOp
     if (media.url) setUrl(media.url);
   }, [media.url]);
 
+  // Runs again when keys arrive for older media (see refreshChatMedia).
   useEffect(() => {
     if (!url && auto) void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [message.id]);
+  }, [message.id, media.downloadable]);
 
   const aspect = media.width && media.height ? `${media.width} / ${media.height}` : undefined;
   const unavailable = !media.downloadable && !url;
   const status = loading ? <div className="spinner small" /> : null;
+
+  // Older media without download keys and without a preview: a compact note rather than an
+  // empty frame. The keys may still arrive from the phone, which re-renders this.
+  if (unavailable && !media.thumb && kind !== 'document') {
+    return (
+      <div className="media-unavailable">
+        <span>{kindLabel(kind)}</span>
+        <small>Loading from your phone… if it doesn't appear, open it there</small>
+      </div>
+    );
+  }
 
   if (kind === 'image' || kind === 'video') {
     if (url && kind === 'image') {

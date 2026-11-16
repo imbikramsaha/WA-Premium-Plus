@@ -185,6 +185,8 @@ export interface WappApi {
   sendVoiceNote(chatId: string, webm: Uint8Array, seconds: number, waveform: number[]): Promise<void>;
   requestMicrophone(): Promise<boolean>;
 
+  /** Asks the phone to re-send a chat's recent messages so older media becomes downloadable. */
+  refreshChatMedia(chatId: string): Promise<boolean>;
   /** Downloads a message's media and returns a URL the window can display. */
   downloadMedia(chatId: string, messageId: string): Promise<string>;
   openMedia(chatId: string, messageId: string): Promise<void>;

@@ -125,6 +125,8 @@ export function formatId(id: string | undefined): string {
   if (!id) return '';
   const [user = id, server] = id.split('@');
   if (server === 'lid') return 'WhatsApp user';
+  if (server === 'newsletter') return 'Channel';
+  if (server === 'g.us') return 'Group';
   return /^\d+$/.test(user) ? `+${user}` : user;
 }
 

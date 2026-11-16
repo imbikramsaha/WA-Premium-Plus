@@ -74,7 +74,7 @@ See the [roadmap](docs/ROADMAP.md) for what comes next.
 
 - **Calls use WhatsApp Web.** No open-source WhatsApp library can carry call audio or video, so the call buttons open the official WhatsApp Web in its own window. Link it once by scanning its QR code. Whether WhatsApp Web can make calls depends on WhatsApp's rollout for your account; if it can't, use the official WhatsApp desktop app for calls.
 - **Keep the app running for scheduled messages.** Messages are sent from your computer. If it is off or asleep at the scheduled time, the message waits; after an hour it is marked *Missed*.
-- **Media from before you linked** may not be downloadable; open it on your phone.
+- **Older media is fetched again from your phone** when you open a chat, so your phone needs to be online. Anything it can't provide shows a note to open it on your phone.
 - **Bulk messaging can get a number banned.** WA Premium Plus connects as an unofficial linked device. Normal use is fine, but sending large volumes of messages, especially to people who haven't messaged you, can get a number banned by WhatsApp.
 - **Features we won't build:** keeping messages the sender deleted, saving view-once media, and other modded-client tricks that break other people's privacy expectations.
 
@@ -114,6 +114,7 @@ Your chats, scheduled messages and WhatsApp login stay in the app's data folder 
 | Command | What it does |
 |---|---|
 | `npm run dev` | Start the app with hot reload |
+| `npm run dev:debug` | Same, with Chrome DevTools remote debugging on port 9333 |
 | `npm test` | Run the tests (scheduler, repeat rules, database, voice-note conversion) |
 | `npm run typecheck` | Type-check the main process and the window |
 | `npm run build` | Build into `out/` |

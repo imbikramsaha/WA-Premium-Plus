@@ -131,6 +131,9 @@ export function registerIpc({
     return systemPreferences.askForMediaAccess('microphone');
   });
 
+  ipcMain.handle('wapp:refreshChatMedia', (_e, chatId: unknown) =>
+    whatsapp.refreshChatMedia(requireString(chatId, 'Chat')).catch(() => false),
+  );
   ipcMain.handle('wapp:downloadMedia', async (_e, chatId: unknown, messageId: unknown) => {
     const name = await whatsapp.downloadMedia(requireString(chatId, 'Chat'), requireString(messageId, 'Message'));
     return store.mediaUrl(name);

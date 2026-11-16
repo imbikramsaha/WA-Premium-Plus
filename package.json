@@ -1,7 +1,7 @@
 {
   "name": "wa-premium-plus",
   "productName": "WA Premium Plus",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Free, open-source WhatsApp desktop client with message scheduling and automation.",
   "license": "MIT",
@@ -11,12 +11,13 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:debug": "electron-vite dev --remoteDebuggingPort 9333",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "node --no-warnings --test tests/*.test.ts",
     "dist": "npm run build && electron-builder",
     "dist:dir": "npm run build && electron-builder --dir",
-    "test": "node --no-warnings --test tests/*.test.ts",
     "icons": "node scripts/generate-icons.mjs"
   },
   "engines": {

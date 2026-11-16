@@ -520,6 +520,26 @@ export class Store {
     return message;
   }
 
+  /** Media messages in a chat that can't be downloaded (no keys stored and no local copy). */
+  countUnavailableMedia(chatId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM messages
+         WHERE chat_id = ? AND kind IN ('image', 'video', 'audio', 'document', 'sticker')
+           AND raw IS NULL AND local_file IS NULL`,
+      )
+      .get(chatId) as { n: number };
+    return row.n;
+  }
+
+  /** The newest message in a chat, as a WhatsApp message key (for history requests). */
+  newestMessage(chatId: string): { id: string; fromMe: boolean; author?: string; timestamp: number } | undefined {
+    const row = this.db
+      .prepare('SELECT id, from_me, author, timestamp FROM messages WHERE chat_id = ? ORDER BY timestamp DESC LIMIT 1')
+      .get(chatId) as { id: string; from_me: number; author: string | null; timestamp: number } | undefined;
+    return row && { id: row.id, fromMe: row.from_me === 1, author: row.author ?? undefined, timestamp: row.timestamp };
+  }
+
   /** Most recent incoming messages in a chat, used to send read receipts. */
   latestIncoming(chatId: string, limit: number): Array<{ id: string; author?: string }> {
     const rows = this.db
