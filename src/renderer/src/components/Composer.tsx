@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { ChatMessage, OutgoingFile } from '../../../shared/types';
+import { personValues, renderTemplate } from '../../../shared/template';
+import type { ChatMessage, OutgoingFile, QuickReply } from '../../../shared/types';
 import { errorMessage, formatBytes, formatDuration, formatId, messagePreview } from '../format';
 import { useVoiceRecorder } from '../useVoiceRecorder';
 import {
@@ -47,6 +48,8 @@ export const Composer = forwardRef<
   ComposerHandle,
   {
     chatId: string;
+    /** The person's name, for {first_name} in quick replies (unset for groups). */
+    personName?: string;
     connected: boolean;
     /** Channels you follow: no composer, just a note. */
     readOnly?: boolean;
@@ -58,7 +61,7 @@ export const Composer = forwardRef<
     /** Opens the dialog for sending a poll, location or contact card. */
     onShare?: (kind: 'poll' | 'location' | 'contact') => void;
   }
->(function Composer({ chatId, connected, readOnly, replyTo, onCancelReply, onSchedule, onShare }, ref) {
+>(function Composer({ chatId, personName, connected, readOnly, replyTo, onCancelReply, onSchedule, onShare }, ref) {
   const [text, setText] = useState('');
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [sending, setSending] = useState(false);
@@ -67,6 +70,25 @@ export const Composer = forwardRef<
   const fileInput = useRef<HTMLInputElement>(null);
   const voice = useVoiceRecorder();
   const { menu, close: closeMenu, openUnder } = useMenu();
+  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
+  const [quickIndex, setQuickIndex] = useState(0);
+  const [quickDismissed, setQuickDismissed] = useState(false);
+
+  useEffect(() => {
+    const load = () => void window.wapp.listQuickReplies().then(setQuickReplies);
+    load();
+    return window.wapp.onEvent((e) => e.type === 'automation-changed' && load());
+  }, []);
+
+  // Typing "/" (and the start of a shortcut) offers saved quick replies.
+  const slash = /^\/([\p{L}\p{N}_-]*)$/u.exec(text);
+  const quickMatches = slash && !quickDismissed ? quickReplies.filter((r) => r.shortcut.startsWith(slash[1]!.toLowerCase())).slice(0, 8) : [];
+
+  function insertQuickReply(reply: QuickReply) {
+    setText(renderTemplate(reply.body, personValues(personName, chatId.endsWith('@s.whatsapp.net') ? chatId.split('@')[0] : undefined)));
+    setQuickIndex(0);
+    inputRef.current?.focus();
+  }
 
   function addFiles(list: File[]) {
     if (list.length === 0) return;
@@ -142,6 +164,24 @@ export const Composer = forwardRef<
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (quickMatches.length > 0) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        setQuickIndex((i) => (i + step + quickMatches.length) % quickMatches.length);
+        return;
+      }
+      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+        e.preventDefault();
+        insertQuickReply(quickMatches[Math.min(quickIndex, quickMatches.length - 1)]!);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setQuickDismissed(true);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void send();
@@ -154,6 +194,27 @@ export const Composer = forwardRef<
   return (
     <>
       {error && <div className="composer-error">{error}</div>}
+      {quickMatches.length > 0 && (
+        <ul className="quick-replies" role="listbox">
+          {quickMatches.map((r, i) => (
+            <li key={r.id}>
+              <button
+                className={i === Math.min(quickIndex, quickMatches.length - 1) ? 'active' : ''}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  insertQuickReply(r);
+                }}
+              >
+                <code>/{r.shortcut}</code>
+                <span>{r.body}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {slash && !quickDismissed && quickReplies.length === 0 && (
+        <div className="quick-replies empty">No quick replies yet. Add them under Automation → Quick replies.</div>
+      )}
       {replyTo && (
         <div className="reply-bar">
           <ReplyIcon size={16} />
@@ -233,7 +294,11 @@ export const Composer = forwardRef<
               ref={inputRef}
               rows={1}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                setText(e.target.value);
+                setQuickIndex(0);
+                if (!e.target.value.startsWith('/')) setQuickDismissed(false);
+              }}
               onKeyDown={onKeyDown}
               onPaste={(e) => {
                 const pasted = Array.from(e.clipboardData.files);

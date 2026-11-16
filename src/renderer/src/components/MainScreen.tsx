@@ -29,8 +29,13 @@ function callsIntroSeen(): boolean {
 /** Extra views and conversation actions, added by later features. */
 export interface MainScreenExtras {
   railItems?: Array<{ view: string; title: string; icon: ReactNode; badge?: number }>;
-  renderView?: (view: string, api: { openChat: (chatId: string, messageId?: string) => void; chats: ChatSummary[] }) => ReactNode;
+  renderView?: (
+    view: string,
+    api: { openChat: (chatId: string, messageId?: string) => void; chats: ChatSummary[]; labels: Label[]; connected: boolean },
+  ) => ReactNode;
   conversation?: ConversationExtras;
+  /** Dialogs the extras open. */
+  overlay?: ReactNode;
 }
 
 export function MainScreen({ connection, extras }: { connection: ConnectionState; extras?: MainScreenExtras }) {
@@ -64,6 +69,10 @@ export function MainScreen({ connection, extras }: { connection: ConnectionState
       }
       if (event.type === 'scheduled-changed') loadScheduled();
       if (event.type === 'labels-changed') loadLabels();
+      if (event.type === 'open-chat') {
+        setView('chats');
+        setSelectedId(event.chatId);
+      }
     });
     // Refresh relative times ("in 5 minutes") once a minute.
     const tick = window.setInterval(loadScheduled, 60_000);
@@ -198,7 +207,7 @@ export function MainScreen({ connection, extras }: { connection: ConnectionState
           ) : view === 'calls' ? (
             <CallsView onCall={openCalls} onOpenChat={openChat} />
           ) : view !== 'chats' ? (
-            extras?.renderView?.(view, { openChat, chats })
+            extras?.renderView?.(view, { openChat, chats, labels, connected })
           ) : selectedChat ? (
             <Conversation
               key={selectedChat.id}
@@ -244,6 +253,7 @@ export function MainScreen({ connection, extras }: { connection: ConnectionState
       )}
 
       {draft && <ScheduleDialog draft={draft} chats={chats} onClose={closeDialog} />}
+      {extras?.overlay}
       {menu && <Menu {...menu} onClose={closeMenu} />}
       {dialog === 'chat' && <NewChatDialog onClose={() => setDialog(null)} onOpen={openChat} />}
       {dialog === 'group' && <NewGroupDialog onClose={() => setDialog(null)} onOpen={openChat} />}

@@ -197,6 +197,20 @@ function main(): void {
       });
       notification.show();
     },
+    alert(accountId, title, body, chatId) {
+      if (!Notification.isSupported()) return;
+      const label = accounts.labelFor(accountId);
+      const notification = new Notification({ title: label ? `${title} · ${label}` : title, body });
+      notification.on('click', () => {
+        if (accounts.activeId !== accountId) {
+          accounts.switchTo(accountId);
+          send({ type: 'account-switched' });
+        }
+        showWindow();
+        if (chatId) send({ type: 'open-chat', chatId });
+      });
+      notification.show();
+    },
   };
   accounts = new Accounts(dataDir, host);
 

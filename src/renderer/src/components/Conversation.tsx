@@ -41,7 +41,7 @@ export interface ConversationExtras {
   /** Extra items for the conversation's "more" menu (export, reminders...). */
   menuItems?: (chat: ChatSummary) => MenuItem[];
   /** Extra items for a message's "more" menu. */
-  messageMenuItems?: (message: ChatMessage) => MenuItem[];
+  messageMenuItems?: (message: ChatMessage, chat: ChatSummary) => MenuItem[];
   /** More actions for a group's member list. */
   groupMemberActions?: (info: GroupInfo) => MenuItem[];
 }
@@ -235,7 +235,7 @@ export function Conversation({
         if (m.fromMe && m.kind === 'text' && now - m.timestamp < EDIT_WINDOW_S) {
           items.push({ label: 'Edit', icon: <EditIcon size={15} />, onClick: () => setEditing(m) });
         }
-        items.push(...(extras?.messageMenuItems?.(m) ?? []));
+        items.push(...(extras?.messageMenuItems?.(m, chat) ?? []));
         items.push({
           label: 'Delete for me',
           icon: <TrashIcon size={15} />,
@@ -264,7 +264,7 @@ export function Conversation({
       onOpenChat,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [jumpTo, isChannel, onOpenImage, onOpenChat, extras],
+    [jumpTo, isChannel, onOpenImage, onOpenChat, extras, chat],
   );
 
   const subtitle = chat.isGroup ? 'Group · click for info' : isChannel ? 'Channel · click for info' : formatId(chat.id);
@@ -375,6 +375,7 @@ export function Conversation({
         <Composer
           ref={composer}
           chatId={chat.id}
+          personName={isPerson ? chat.name : undefined}
           connected={connected}
           readOnly={isChannel}
           replyTo={replyTo}

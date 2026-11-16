@@ -35,12 +35,19 @@ export class Scheduler {
   private readonly whatsapp: Sender;
   private readonly onChange: () => void;
   private readonly gapMs: number;
+  private readonly onResult?: (item: DueMessage, error?: string) => void;
 
-  constructor(store: Store, whatsapp: Sender, onChange: () => void, options: { gapMs?: number } = {}) {
+  constructor(
+    store: Store,
+    whatsapp: Sender,
+    onChange: () => void,
+    options: { gapMs?: number; onResult?: (item: DueMessage, error?: string) => void } = {},
+  ) {
     this.store = store;
     this.whatsapp = whatsapp;
     this.onChange = onChange;
     this.gapMs = options.gapMs ?? GAP_BETWEEN_SENDS_MS;
+    this.onResult = options.onResult;
   }
 
   start(): void {
@@ -92,9 +99,11 @@ export class Scheduler {
         } else {
           this.store.setScheduledStatus(item.id, 'pending', { sendAt: next, sentAt, error: null });
         }
+        this.onResult?.(item);
       } catch (err) {
         const giveUp = isPermanent(err) || Date.now() - item.sendAt > RETRY_FOR_MS;
         this.store.setScheduledStatus(item.id, giveUp ? 'failed' : 'pending', { error: errorMessage(err) });
+        if (giveUp) this.onResult?.(item, errorMessage(err));
       }
       this.onChange();
       await sleep(this.gapMs);

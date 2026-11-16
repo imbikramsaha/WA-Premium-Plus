@@ -225,6 +225,7 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
     const sent = await this.requireSocket().sendMessage(chatId, content, options);
     if (!sent) return undefined;
     if (sent.key.id && sent.message) this.rememberSent(sent.key.id, sent.message);
+    this.handleMessages([sent], 'append');
     if (localCopy && sent.key.id) {
       // Keep a copy of what we sent so it shows without downloading it again.
       const parsed = parseMessage(sent, this.resolveJid);
@@ -233,11 +234,10 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
         const name = mediaFileName(message.chatId, message.id, message.media?.mimetype, message.media?.fileName);
         await mkdir(this.opts.mediaDir, { recursive: true });
         await copyFile(localCopy, join(this.opts.mediaDir, name));
-        this.opts.store.upsertMessage(message);
         this.opts.store.setLocalFile(message.chatId, message.id, name);
+        this.emitStored(this.opts.store.getMessage(message.chatId, message.id));
       }
     }
-    this.handleMessages([sent], 'append');
     return sent.key.id ?? undefined;
   }
 
@@ -264,8 +264,9 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
     return quotedId ? { quoted: this.waMessageFor(chatId, quotedId) } : undefined;
   }
 
-  async sendText(chatId: string, text: string, quotedId?: string): Promise<string | undefined> {
-    return this.send(chatId, { text }, undefined, this.quoteOptions(chatId, quotedId));
+  /** Sends text; `mentions` are the WhatsApp IDs of people @-mentioned in it. */
+  async sendText(chatId: string, text: string, quotedId?: string, mentions?: string[]): Promise<string | undefined> {
+    return this.send(chatId, mentions?.length ? { text, mentions } : { text }, undefined, this.quoteOptions(chatId, quotedId));
   }
 
   /** Sends a poll, a location or contact cards. */

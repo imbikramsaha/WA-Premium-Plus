@@ -334,6 +334,217 @@ export interface ScheduleInput {
   revertAt?: number;
 }
 
+// --- Automation ---
+
+export interface QuickReply {
+  id: number;
+  /** Typed after a slash in the message box, e.g. "thanks" for /thanks. */
+  shortcut: string;
+  body: string;
+}
+
+/** Days and hours, e.g. business hours Mon–Fri 09:00–18:00 (in the computer's time zone). */
+export interface Hours {
+  /** 0 = Sunday ... 6 = Saturday. */
+  days: number[];
+  /** "HH:MM". An end before the start runs past midnight. */
+  start: string;
+  end: string;
+}
+
+export type RuleTrigger = 'message' | 'firstMessage' | 'groupJoin';
+
+export type RuleAction =
+  | { type: 'reply'; text: string; quote?: boolean }
+  | { type: 'label'; labelId: number }
+  | { type: 'markRead' }
+  | { type: 'notify' };
+
+export interface RuleConfig {
+  /** 'message': any incoming message; 'firstMessage': someone's first message ever; 'groupJoin': people join a group. */
+  trigger: RuleTrigger;
+  /** Who it applies to. Groups are only included when chosen, so auto-replies don't flood groups. */
+  scope: 'people' | 'contacts' | 'unknown' | 'chats';
+  chatIds?: string[];
+  match?: { type: 'any' | 'contains' | 'exact' | 'starts' | 'regex'; text: string };
+  /** When the rule is active: always, only inside these hours, or only outside them (away messages). */
+  when: { mode: 'always' | 'inside' | 'outside'; hours?: Hours };
+  actions: RuleAction[];
+  /** Don't fire again for the same chat within this many minutes. */
+  cooldownMinutes: number;
+}
+
+export interface AutomationRule {
+  id: number;
+  name: string;
+  enabled: boolean;
+  config: RuleConfig;
+  createdAt: number;
+  fires: number;
+  lastFiredAt?: number;
+}
+
+export interface CallSettings {
+  /** Decline incoming calls automatically and send a message. */
+  autoReject: boolean;
+  message: string;
+  /** Everyone, or only numbers not in your contacts. */
+  scope: 'everyone' | 'unknown';
+  /** Only at these times (e.g. outside business hours); 'always' otherwise. */
+  when: { mode: 'always' | 'inside' | 'outside'; hours?: Hours };
+}
+
+export interface AutomationSettings {
+  /** At most this many automatic replies per hour across all rules (safety limit). */
+  maxRepliesPerHour: number;
+  /** Words that opt someone out of broadcasts when they send them on their own. */
+  optOutKeywords: string[];
+  /** Reply sent to confirm an opt-out (empty: no reply). */
+  optOutReply: string;
+}
+
+export type ReminderStatus = 'pending' | 'done' | 'resolved' | 'cancelled';
+
+export interface Reminder {
+  id: number;
+  chatId: string;
+  chatName: string;
+  messageId?: string;
+  note: string;
+  dueAt: number;
+  /** Skip the reminder if they reply before it's due. */
+  onlyIfNoReply: boolean;
+  /** Send this message to them when due (instead of only reminding you). */
+  followUp?: string;
+  status: ReminderStatus;
+  createdAt: number;
+  doneAt?: number;
+}
+
+export interface ReminderInput {
+  chatId: string;
+  messageId?: string;
+  note: string;
+  dueAt: number;
+  onlyIfNoReply: boolean;
+  followUp?: string;
+}
+
+export interface ContactList {
+  id: number;
+  name: string;
+  count: number;
+  /** Extra columns from the CSV, usable as {column} in messages. */
+  columns: string[];
+  createdAt: number;
+}
+
+export interface ListMember {
+  jid: string;
+  name?: string;
+  fields: Record<string, string>;
+  optedOut: boolean;
+}
+
+/** A CSV file read for import, before it's saved as a list. */
+export interface CsvPreview {
+  columns: string[];
+  phoneColumn: number;
+  nameColumn: number;
+  rows: string[][];
+}
+
+export interface ListImport {
+  name: string;
+  /** From a CSV: the rows with chosen columns. */
+  csv?: { columns: string[]; phoneColumn: number; nameColumn: number; rows: string[][]; defaultCountryCode: string };
+  /** From chats or group members. */
+  members?: Array<{ jid: string; name?: string }>;
+}
+
+export type CampaignStatus = 'draft' | 'running' | 'paused' | 'done' | 'cancelled';
+
+export interface Campaign {
+  id: number;
+  name: string;
+  listId: number;
+  listName: string;
+  body: string;
+  attachment?: AttachmentInfo;
+  status: CampaignStatus;
+  /** Don't start before this time (Unix ms). */
+  startAt?: number;
+  /** Most messages per day, across all broadcasts. */
+  dailyCap: number;
+  /** Random pause between messages, in seconds. */
+  minDelay: number;
+  maxDelay: number;
+  /** Adds "Reply STOP to stop these messages." */
+  optOutFooter: boolean;
+  /** Only send between these times of day ("HH:MM"). */
+  sendFrom: string;
+  sendUntil: string;
+  counts: { total: number; pending: number; sent: number; failed: number; skipped: number };
+  nextAt?: number;
+  lastError?: string;
+  createdAt: number;
+  finishedAt?: number;
+}
+
+export interface CampaignInput {
+  name: string;
+  listId: number;
+  body: string;
+  attachmentPath?: string | null;
+  startAt?: number;
+  dailyCap: number;
+  minDelay: number;
+  maxDelay: number;
+  optOutFooter: boolean;
+  sendFrom: string;
+  sendUntil: string;
+}
+
+export interface CampaignRecipient {
+  jid: string;
+  name?: string;
+  status: 'pending' | 'sent' | 'failed' | 'skipped';
+  sentAt?: number;
+  error?: string;
+}
+
+export interface OptOut {
+  jid: string;
+  name: string;
+  at: number;
+  source: string;
+}
+
+export const WEBHOOK_EVENTS = [
+  'message.received',
+  'message.sent',
+  'call.received',
+  'scheduled.sent',
+  'scheduled.failed',
+  'broadcast.sent',
+  'broadcast.finished',
+  'optout',
+  'reminder.due',
+] as const;
+
+export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
+
+export interface Webhook {
+  id: number;
+  url: string;
+  events: WebhookEvent[];
+  enabled: boolean;
+  /** Used to sign each request (X-WAPP-Signature: sha256=HMAC of the body). */
+  secret: string;
+  lastStatus?: string;
+  lastAt?: number;
+}
+
 /** A file to send right away, either from disk or pasted bytes. */
 export type OutgoingFile =
   | { path: string }
@@ -356,7 +567,12 @@ export type AppEvent =
   /** Account list details changed (names, connection, unread counts). */
   | { type: 'accounts-changed' }
   /** A different account is now shown: the window reloads its data. */
-  | { type: 'account-switched' };
+  | { type: 'account-switched' }
+  | { type: 'automation-changed' }
+  /** Open a chat (from a notification). */
+  | { type: 'open-chat'; chatId: string }
+  | { type: 'reminders-changed' }
+  | { type: 'broadcasts-changed' };
 
 export interface ContactInfo {
   id: string;
@@ -418,6 +634,50 @@ export interface WappApi {
   unfollowChannel(id: string): Promise<void>;
   getChannelInfo(id: string): Promise<ChannelInfo>;
   muteChannel(id: string, muted: boolean): Promise<void>;
+
+  // Automation
+  listQuickReplies(): Promise<QuickReply[]>;
+  saveQuickReply(reply: { id?: number; shortcut: string; body: string }): Promise<void>;
+  deleteQuickReply(id: number): Promise<void>;
+  listRules(): Promise<AutomationRule[]>;
+  saveRule(rule: { id?: number; name: string; enabled: boolean; config: RuleConfig }): Promise<void>;
+  setRuleEnabled(id: number, enabled: boolean): Promise<void>;
+  deleteRule(id: number): Promise<void>;
+  getCallSettings(): Promise<CallSettings>;
+  saveCallSettings(settings: CallSettings): Promise<void>;
+  getAutomationSettings(): Promise<AutomationSettings>;
+  saveAutomationSettings(settings: AutomationSettings): Promise<void>;
+  listReminders(): Promise<Reminder[]>;
+  createReminder(input: ReminderInput): Promise<void>;
+  cancelReminder(id: number): Promise<void>;
+  deleteReminder(id: number): Promise<void>;
+
+  // Broadcasts
+  readCsv(path: string): Promise<CsvPreview>;
+  listContactLists(): Promise<ContactList[]>;
+  createContactList(input: ListImport): Promise<{ id: number; added: number; skipped: number }>;
+  listListMembers(listId: number): Promise<ListMember[]>;
+  removeListMember(listId: number, jid: string): Promise<void>;
+  deleteContactList(id: number): Promise<void>;
+  listCampaigns(): Promise<Campaign[]>;
+  saveCampaign(id: number | undefined, input: CampaignInput): Promise<number>;
+  startCampaign(id: number): Promise<void>;
+  pauseCampaign(id: number): Promise<void>;
+  cancelCampaign(id: number): Promise<void>;
+  deleteCampaign(id: number): Promise<void>;
+  listCampaignRecipients(id: number): Promise<CampaignRecipient[]>;
+  /** Broadcast messages sent today, against the daily limit. */
+  broadcastsSentToday(): Promise<number>;
+  listOptOuts(): Promise<OptOut[]>;
+  addOptOut(jid: string): Promise<void>;
+  removeOptOut(jid: string): Promise<void>;
+
+  // Webhooks
+  listWebhooks(): Promise<Webhook[]>;
+  saveWebhook(input: { id?: number; url: string; events: WebhookEvent[]; enabled: boolean }): Promise<void>;
+  deleteWebhook(id: number): Promise<void>;
+  /** Sends a test event; returns the response status. */
+  testWebhook(id: number): Promise<string>;
 
   /** Changes a group setting now (admins only). */
   applyGroupAction(chatId: string, action: GroupAction): Promise<void>;

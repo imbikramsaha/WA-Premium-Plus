@@ -210,6 +210,8 @@ CREATE TABLE IF NOT EXISTS campaigns (
   min_delay INTEGER NOT NULL,
   max_delay INTEGER NOT NULL,
   opt_out_footer INTEGER NOT NULL DEFAULT 1,
+  send_from TEXT NOT NULL DEFAULT '09:00',
+  send_until TEXT NOT NULL DEFAULT '20:00',
   next_at INTEGER,
   last_error TEXT,
   created_at INTEGER NOT NULL,
@@ -540,6 +542,22 @@ export class Store {
         chat.pinned ?? null,
         chat.mutedUntil ?? null,
       );
+  }
+
+  /** Whether someone is a saved contact (has a name from the phone's address book). */
+  isSavedContact(id: string): boolean {
+    return Boolean(this.db.prepare('SELECT 1 FROM contacts WHERE id = ? AND name IS NOT NULL').get(id));
+  }
+
+  countMessages(chatId: string): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM messages WHERE chat_id = ?').get(chatId) as { n: number }).n;
+  }
+
+  /** Whether they sent anything after a time (Unix ms). */
+  hasIncomingSince(chatId: string, sinceMs: number): boolean {
+    return Boolean(
+      this.db.prepare('SELECT 1 FROM messages WHERE chat_id = ? AND from_me = 0 AND timestamp * 1000 > ? LIMIT 1').get(chatId, sinceMs),
+    );
   }
 
   /** Whether notifications for a chat are muted right now. */

@@ -147,7 +147,7 @@ export function Modal({
   }, [onClose]);
   return (
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`dialog${wide ? ' wide' : ''}${narrow ? ' narrow' : ''}`} role="dialog" aria-modal="true">
+      <div className={`dialog modal${wide ? ' wide' : ''}${narrow ? ' narrow' : ''}`} role="dialog" aria-modal="true">
         <header className="dialog-header">
           <h2>{title}</h2>
           <button className="icon-button" onClick={onClose} title="Close">

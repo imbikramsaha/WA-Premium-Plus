@@ -10,6 +10,7 @@ import { isValidZone, localZone, parseWallTime, zoneCity, zoneForPhone } from '.
 import type { ChatAction, ContactCard, GroupAction, MemberAction, RepeatRule, RichContent, ScheduleTarget } from '../shared/types';
 import type { Account } from './account';
 import type { Accounts } from './accounts';
+import { registerAutomationIpc } from './ipc-automation';
 import { describeFile, keepAttachment, writeTempFile } from './media';
 import type { Attachment, NewSchedule } from './store';
 
@@ -504,4 +505,6 @@ export function registerIpc(ctx: IpcContext): void {
   });
 
   handle('openCallsWindow', (a, chatId) => ctx.openCallsWindow(a, typeof chatId === 'string' ? chatId : undefined));
+
+  registerAutomationIpc(handle);
 }
