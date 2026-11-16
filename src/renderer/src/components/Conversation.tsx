@@ -1,8 +1,11 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type DragEvent } from 'react';
 import type { ChatMessage, ChatSummary, MessageAck } from '../../../shared/types';
-import { errorMessage, formatDay, formatId, formatTime, kindLabel } from '../format';
+import { formatDay, formatId, formatTime, kindLabel } from '../format';
 import { Avatar } from './Avatar';
-import { ClockIcon, SendIcon } from './Icons';
+import { Composer, type ComposerHandle } from './Composer';
+import { GroupInfoPanel } from './GroupInfoPanel';
+import { ClockIcon, InfoIcon, PhoneIcon, VideoIcon } from './Icons';
+import { MediaView } from './MediaView';
 
 function upsertMessage(list: ChatMessage[], message: ChatMessage): ChatMessage[] {
   const index = list.findIndex((m) => m.id === message.id);
@@ -21,8 +24,18 @@ function Ack({ ack }: { ack?: MessageAck }) {
         <ClockIcon size={12} />
       </span>
     );
-  if (ack === 'error') return <span className="ack error" title="Not sent">!</span>;
-  if (ack === 'sent') return <span className="ack" title="Sent">✓</span>;
+  if (ack === 'error')
+    return (
+      <span className="ack error" title="Not sent">
+        !
+      </span>
+    );
+  if (ack === 'sent')
+    return (
+      <span className="ack" title="Sent">
+        ✓
+      </span>
+    );
   const read = ack === 'read' || ack === 'played';
   return (
     <span className={`ack${read ? ' read' : ''}`} title={read ? 'Read' : 'Delivered'}>
@@ -31,29 +44,42 @@ function Ack({ ack }: { ack?: MessageAck }) {
   );
 }
 
+const MEDIA_KINDS = new Set(['image', 'video', 'audio', 'document', 'sticker']);
 const userIsLooking = () => document.visibilityState === 'visible' && document.hasFocus();
 
 export function Conversation({
   chat,
   connected,
   onSchedule,
+  onOpenImage,
+  onCall,
 }: {
   chat: ChatSummary;
   connected: boolean;
-  /** Opens the schedule dialog for this chat with the composer's text. */
-  onSchedule: (body: string, clearComposer: () => void) => void;
+  onSchedule: (body: string, attachmentPath: string | undefined, clearComposer: () => void) => void;
+  onOpenImage: (url: string) => void;
+  /** Opens WhatsApp Web for calling this person. */
+  onCall: (chatId: string) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const composer = useRef<ComposerHandle>(null);
+  const stickToBottom = useRef(true);
 
   useEffect(() => {
     let active = true;
     setMessages([]);
-    void window.wapp.listMessages(chat.id).then((list) => active && setMessages(list));
+    setShowInfo(false);
+    stickToBottom.current = true;
+    void window.wapp.listMessages(chat.id).then((list) => {
+      if (!active) return;
+      setMessages(list);
+      setHasOlder(list.length >= 100);
+    });
     if (userIsLooking()) void window.wapp.markRead(chat.id);
 
     const markReadIfLooking = () => {
@@ -68,7 +94,6 @@ export function Conversation({
       }
     });
     window.addEventListener('focus', markReadIfLooking);
-    inputRef.current?.focus();
     return () => {
       active = false;
       off();
@@ -76,109 +101,136 @@ export function Conversation({
     };
   }, [chat.id]);
 
-  // Keep the newest message in view.
+  // Keep the newest message in view, unless the user scrolled up to read older ones.
+  // Watching the content size also covers images that finish loading after the first render.
   useLayoutEffect(() => {
+    const list = listRef.current;
+    const inner = innerRef.current;
+    if (!list || !inner) return;
+    const toBottom = () => {
+      if (stickToBottom.current) list.scrollTop = list.scrollHeight;
+    };
+    toBottom();
+    const observer = new ResizeObserver(toBottom);
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, [messages]);
+
+  async function loadOlder() {
     const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length]);
-
-  // Grow the composer with its content, up to a limit.
-  useLayoutEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  }, [text]);
-
-  async function send() {
-    const body = text.trim();
-    if (!body || sending) return;
-    setSending(true);
-    setError(null);
-    try {
-      await window.wapp.sendText(chat.id, body);
-      setText('');
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSending(false);
-      inputRef.current?.focus();
-    }
+    const oldest = messages[0];
+    if (!el || !oldest) return;
+    const previousHeight = el.scrollHeight;
+    const older = await window.wapp.listMessages(chat.id, oldest.timestamp);
+    setHasOlder(older.length >= 100);
+    stickToBottom.current = false;
+    setMessages((prev) => [...older.filter((o) => !prev.some((p) => p.id === o.id)), ...prev]);
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight - previousHeight;
+    });
   }
 
-  function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void send();
-    }
+  function onDrop(e: DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    composer.current?.addFiles(Array.from(e.dataTransfer.files));
   }
+
+  const isPerson = chat.id.endsWith('@s.whatsapp.net');
 
   return (
-    <div className="conversation">
-      <header className="conversation-header">
-        <Avatar id={chat.id} name={chat.name} size={40} />
-        <div className="conversation-title">
-          <strong>{chat.name}</strong>
-          <span>{chat.isGroup ? 'Group' : formatId(chat.id)}</span>
-        </div>
-        <button className="button ghost" onClick={() => onSchedule(text, () => setText(''))}>
-          <ClockIcon size={18} />
-          Schedule
-        </button>
-      </header>
+    <div className="conversation-wrap">
+      <div
+        className={`conversation${dragging ? ' dragging' : ''}`}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('Files')) {
+            e.preventDefault();
+            setDragging(true);
+          }
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setDragging(false);
+        }}
+        onDrop={onDrop}
+      >
+        <header className="conversation-header">
+          <button className="conversation-who" onClick={() => chat.isGroup && setShowInfo((v) => !v)}>
+            <Avatar id={chat.id} name={chat.name} size={40} />
+            <div className="conversation-title">
+              <strong>{chat.name}</strong>
+              <span>{chat.isGroup ? 'Group · click for info' : formatId(chat.id)}</span>
+            </div>
+          </button>
+          {isPerson && (
+            <>
+              <button className="icon-button" title="Voice call (opens WhatsApp Web)" onClick={() => onCall(chat.id)}>
+                <PhoneIcon />
+              </button>
+              <button className="icon-button" title="Video call (opens WhatsApp Web)" onClick={() => onCall(chat.id)}>
+                <VideoIcon />
+              </button>
+            </>
+          )}
+          {chat.isGroup && (
+            <button className="icon-button" title="Group info" onClick={() => setShowInfo((v) => !v)}>
+              <InfoIcon />
+            </button>
+          )}
+          <button className="button ghost" onClick={() => onSchedule('', undefined, () => undefined)}>
+            <ClockIcon size={18} />
+            Schedule
+          </button>
+        </header>
 
-      <div className="messages" ref={listRef}>
-        {messages.length === 0 && <p className="messages-empty">No messages on this computer yet.</p>}
-        {messages.map((m, i) => {
-          const prev = messages[i - 1];
-          const newDay = !prev || formatDay(prev.timestamp) !== formatDay(m.timestamp);
-          return (
-            <Fragment key={m.id}>
-              {newDay && <div className="day-separator">{formatDay(m.timestamp)}</div>}
-              <div className={`bubble-row ${m.fromMe ? 'out' : 'in'}`}>
-                <div className="bubble">
-                  {chat.isGroup && !m.fromMe && (
-                    <div className="bubble-author">{m.authorName || formatId(m.author)}</div>
-                  )}
-                  {m.kind !== 'text' && <div className="bubble-kind">{kindLabel(m.kind)}</div>}
-                  {m.body && <div className="bubble-text">{m.body}</div>}
-                  <div className="bubble-meta">
-                    {formatTime(m.timestamp)}
-                    {m.fromMe && <Ack ack={m.ack} />}
+        <div
+          className="messages"
+          ref={listRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          }}
+        >
+          <div className="messages-inner" ref={innerRef}>
+          {hasOlder && (
+            <button className="button small load-older" onClick={() => void loadOlder()}>
+              Load older messages
+            </button>
+          )}
+          {messages.length === 0 && <p className="messages-empty">No messages on this computer yet.</p>}
+          {messages.map((m, i) => {
+            const prev = messages[i - 1];
+            const newDay = !prev || formatDay(prev.timestamp) !== formatDay(m.timestamp);
+            const isMedia = MEDIA_KINDS.has(m.kind) && m.media;
+            return (
+              <Fragment key={m.id}>
+                {newDay && <div className="day-separator">{formatDay(m.timestamp)}</div>}
+                <div className={`bubble-row ${m.fromMe ? 'out' : 'in'}`}>
+                  <div className={`bubble${m.kind === 'sticker' ? ' sticker' : ''}${m.kind === 'deleted' ? ' deleted' : ''}`}>
+                    {chat.isGroup && !m.fromMe && <div className="bubble-author">{m.authorName || formatId(m.author)}</div>}
+                    {isMedia ? (
+                      <MediaView message={m} onOpenImage={onOpenImage} />
+                    ) : (
+                      m.kind !== 'text' && m.kind !== 'other' && <div className="bubble-kind">{kindLabel(m.kind)}</div>
+                    )}
+                    {m.body && m.kind !== 'document' && <div className="bubble-text">{m.body}</div>}
+                    {m.kind === 'other' && !m.body && <div className="bubble-kind">Message type not supported yet</div>}
+                    <div className="bubble-meta">
+                      {m.edited && <span>Edited</span>}
+                      {formatTime(m.timestamp)}
+                      {m.fromMe && m.kind !== 'deleted' && <Ack ack={m.ack} />}
+                    </div>
                   </div>
                 </div>
-              </div>
-            </Fragment>
-          );
-        })}
-      </div>
+              </Fragment>
+            );
+          })}
+          </div>
+        </div>
 
-      {error && <div className="composer-error">{error}</div>}
-      <footer className="composer">
-        <textarea
-          ref={inputRef}
-          rows={1}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={connected ? 'Type a message' : 'Waiting for connection… you can still schedule'}
-        />
-        <button
-          className="icon-button"
-          title="Schedule this message"
-          onClick={() => onSchedule(text, () => setText(''))}
-        >
-          <ClockIcon />
-        </button>
-        <button
-          className="icon-button send"
-          title="Send"
-          onClick={() => void send()}
-          disabled={!connected || sending || !text.trim()}
-        >
-          <SendIcon />
-        </button>
-      </footer>
+        <Composer ref={composer} chatId={chat.id} connected={connected} onSchedule={onSchedule} />
+        {dragging && <div className="drop-hint">Drop files to send them</div>}
+      </div>
+      {showInfo && chat.isGroup && <GroupInfoPanel chatId={chat.id} onClose={() => setShowInfo(false)} />}
     </div>
   );
 }

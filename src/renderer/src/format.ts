@@ -1,4 +1,4 @@
-import type { MessageKind, Repeat } from '../../shared/types';
+import type { MessageKind } from '../../shared/types';
 
 const timeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 const shortDateFormat = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' });
@@ -87,7 +87,9 @@ const KIND_LABELS: Record<MessageKind, string> = {
   location: 'Location',
   contact: 'Contact',
   poll: 'Poll',
-  other: 'Unsupported message',
+  call: 'Call',
+  deleted: 'This message was deleted',
+  other: 'Message',
 };
 
 export function kindLabel(kind: MessageKind): string {
@@ -95,25 +97,34 @@ export function kindLabel(kind: MessageKind): string {
 }
 
 export function messagePreview({ kind, body }: { kind: MessageKind; body: string }): string {
-  if (kind === 'text') return body;
+  if (kind === 'text' || kind === 'call' || (kind === 'other' && body)) return body;
+  if (kind === 'deleted') return kindLabel(kind);
   return body ? `${kindLabel(kind)}: ${body}` : kindLabel(kind);
 }
 
-const REPEAT_LABELS: Record<Repeat, string> = {
-  none: 'Does not repeat',
-  daily: 'Every day',
-  weekly: 'Every week',
-  monthly: 'Every month',
-};
-
-export function repeatLabel(repeat: Repeat): string {
-  return REPEAT_LABELS[repeat];
+export function formatBytes(bytes: number | undefined): string {
+  if (!bytes) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
 
-/** "919876543210@s.whatsapp.net" -> "+919876543210" */
+/** 75 -> "1:15" */
+export function formatDuration(seconds: number | undefined): string {
+  const s = Math.max(0, Math.round(seconds ?? 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** "919876543210@s.whatsapp.net" -> "+919876543210"; privacy IDs aren't phone numbers. */
 export function formatId(id: string | undefined): string {
   if (!id) return '';
-  const user = id.split('@')[0] ?? id;
+  const [user = id, server] = id.split('@');
+  if (server === 'lid') return 'WhatsApp user';
   return /^\d+$/.test(user) ? `+${user}` : user;
 }
 

@@ -22,9 +22,30 @@ export type MessageKind =
   | 'location'
   | 'contact'
   | 'poll'
+  | 'call'
+  | 'deleted'
   | 'other';
 
 export type MessageAck = 'error' | 'pending' | 'sent' | 'delivered' | 'read' | 'played';
+
+export interface MediaInfo {
+  mimetype?: string;
+  fileName?: string;
+  /** Size in bytes. */
+  size?: number;
+  /** Duration of audio and video, in seconds. */
+  seconds?: number;
+  /** True for voice notes (as opposed to audio files). */
+  ptt?: boolean;
+  /** Small preview image as a data URL, when WhatsApp includes one. */
+  thumb?: string;
+  width?: number;
+  height?: number;
+  /** URL of the downloaded file (wapp-media://...), once downloaded. */
+  url?: string;
+  /** False when the app doesn't have the keys to download it (for example, very old messages). */
+  downloadable: boolean;
+}
 
 export interface ChatMessage {
   id: string;
@@ -40,6 +61,8 @@ export interface ChatMessage {
   /** Unix time in seconds. */
   timestamp: number;
   ack?: MessageAck;
+  edited?: boolean;
+  media?: MediaInfo;
 }
 
 export interface ChatSummary {
@@ -50,30 +73,93 @@ export interface ChatSummary {
   lastMessage?: Pick<ChatMessage, 'body' | 'kind' | 'fromMe' | 'timestamp'>;
 }
 
-export type Repeat = 'none' | 'daily' | 'weekly' | 'monthly';
+export interface GroupParticipantInfo {
+  id: string;
+  name: string;
+  /** Phone number in international format, when known. */
+  phone?: string;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+  isMe: boolean;
+}
+
+export interface GroupInfo {
+  id: string;
+  subject: string;
+  description?: string;
+  createdAt?: number;
+  /** Only admins can send messages. */
+  announce: boolean;
+  /** Only admins can edit group info. */
+  restrict: boolean;
+  amAdmin: boolean;
+  participants: GroupParticipantInfo[];
+}
+
+// --- Scheduling ---
+
+export type Repeat = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+
+export interface RepeatRule {
+  repeat: Repeat;
+  /** For 'custom': repeat every N units. */
+  interval?: number;
+  unit?: 'day' | 'week' | 'month';
+  /** For custom weekly rules: days of the week, 0 = Sunday ... 6 = Saturday. */
+  weekdays?: number[];
+  /** Stop repeating after this time (Unix ms). */
+  endAt?: number;
+}
+
+export type AttachmentKind = 'image' | 'video' | 'audio' | 'document';
+
+export interface AttachmentInfo {
+  name: string;
+  mimetype: string;
+  kind: AttachmentKind;
+  size: number;
+}
+
+/** 'chat' sends to a chat; 'status' posts to your WhatsApp status. */
+export type ScheduleTarget = 'chat' | 'status';
 
 export type ScheduleStatus = 'pending' | 'sent' | 'failed' | 'missed' | 'cancelled';
 
 export interface ScheduledMessage {
   id: number;
+  target: ScheduleTarget;
   chatId: string;
   chatName: string;
   body: string;
   /** Next send time, Unix ms. */
   sendAt: number;
-  repeat: Repeat;
+  rule: RepeatRule;
   status: ScheduleStatus;
+  attachment?: AttachmentInfo;
   lastError?: string;
   lastSentAt?: number;
+  sentCount: number;
   createdAt: number;
 }
 
 export interface ScheduleInput {
-  chatId: string;
+  target: ScheduleTarget;
+  /** Chats to send to. Creating with several chats makes one scheduled message per chat. */
+  chatIds: string[];
   body: string;
   sendAt: number;
-  repeat: Repeat;
+  rule: RepeatRule;
+  /**
+   * A file to attach: a local path from the file picker. Null removes the attachment;
+   * undefined keeps the current one when editing.
+   */
+  attachmentPath?: string | null;
 }
+
+/** A file to send right away, either from disk or pasted bytes. */
+export type OutgoingFile =
+  | { path: string }
+  | { data: Uint8Array; name: string; mimetype: string };
 
 /** Events the main process pushes to the renderer. */
 export type AppEvent =
@@ -88,15 +174,39 @@ export interface WappApi {
   platform: string;
   getConnection(): Promise<ConnectionState>;
   logout(): Promise<void>;
+
   listChats(): Promise<ChatSummary[]>;
-  listMessages(chatId: string): Promise<ChatMessage[]>;
+  /** Newest messages first page, or older ones before a timestamp (seconds). */
+  listMessages(chatId: string, before?: number): Promise<ChatMessage[]>;
   markRead(chatId: string): Promise<void>;
   sendText(chatId: string, text: string): Promise<void>;
+  sendFile(chatId: string, file: OutgoingFile, caption?: string): Promise<void>;
+  /** Sends a voice note recorded as WebM/Opus; the app converts it to WhatsApp's format. */
+  sendVoiceNote(chatId: string, webm: Uint8Array, seconds: number, waveform: number[]): Promise<void>;
+  requestMicrophone(): Promise<boolean>;
+
+  /** Downloads a message's media and returns a URL the window can display. */
+  downloadMedia(chatId: string, messageId: string): Promise<string>;
+  openMedia(chatId: string, messageId: string): Promise<void>;
+  saveMedia(chatId: string, messageId: string): Promise<void>;
+
+  getGroupInfo(chatId: string): Promise<GroupInfo>;
+  getGroupInviteLink(chatId: string): Promise<string>;
+
   listScheduled(): Promise<ScheduledMessage[]>;
   createScheduled(input: ScheduleInput): Promise<void>;
   updateScheduled(id: number, input: ScheduleInput): Promise<void>;
   cancelScheduled(id: number): Promise<void>;
   deleteScheduled(id: number): Promise<void>;
   sendScheduledNow(id: number): Promise<void>;
+
+  /**
+   * Opens official WhatsApp Web in its own window, for voice and video calls.
+   * With a chat ID of a person, opens straight into that chat.
+   */
+  openCallsWindow(chatId?: string): Promise<void>;
+
+  /** Local path of a file chosen in a file input or dropped onto the window. */
+  getPathForFile(file: File): string;
   onEvent(listener: (event: AppEvent) => void): () => void;
 }

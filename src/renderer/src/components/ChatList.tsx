@@ -14,16 +14,28 @@ export function ChatList({
   onSelect: (id: string) => void;
 }) {
   const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<'all' | 'unread' | 'groups'>('all');
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return q ? chats.filter((c) => c.name.toLowerCase().includes(q) || c.id.includes(q)) : chats;
-  }, [chats, query]);
+    return chats.filter(
+      (c) =>
+        (filter === 'all' || (filter === 'unread' ? c.unreadCount > 0 : c.isGroup)) &&
+        (!q || c.name.toLowerCase().includes(q) || c.id.includes(q)),
+    );
+  }, [chats, query, filter]);
 
   return (
     <>
       <div className="search">
         <SearchIcon size={16} />
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search chats" />
+      </div>
+      <div className="filters">
+        {(['all', 'unread', 'groups'] as const).map((f) => (
+          <button key={f} className={`chip${filter === f ? ' active' : ''}`} onClick={() => setFilter(f)}>
+            {f === 'all' ? 'All' : f === 'unread' ? 'Unread' : 'Groups'}
+          </button>
+        ))}
       </div>
       <ul className="chat-list">
         {visible.map((chat) => (
@@ -56,7 +68,11 @@ export function ChatList({
         ))}
         {visible.length === 0 && (
           <li className="list-empty">
-            {chats.length === 0 ? 'Your chats will appear here as WhatsApp syncs them.' : 'No chats match your search.'}
+            {chats.length === 0
+              ? 'Your chats will appear here as WhatsApp syncs them.'
+              : filter === 'unread' && !query
+                ? 'No unread chats.'
+                : 'No chats match.'}
           </li>
         )}
       </ul>

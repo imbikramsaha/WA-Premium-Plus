@@ -3,12 +3,22 @@ import type { ChatSummary, ConnectionState, ScheduledMessage } from '../../../sh
 import { errorMessage } from '../format';
 import { ChatList } from './ChatList';
 import { Conversation } from './Conversation';
-import { ChatsIcon, ClockIcon, LogoutIcon } from './Icons';
+import { ChatsIcon, ClockIcon, CloseIcon, LogoutIcon, PhoneIcon } from './Icons';
 import { Logo } from './Logo';
 import { ScheduleDialog, type ScheduleDraft } from './ScheduleDialog';
 import { ScheduledList } from './ScheduledList';
 
 type View = 'chats' | 'scheduled';
+
+const CALLS_INTRO_KEY = 'wapp.callsIntroSeen';
+
+function callsIntroSeen(): boolean {
+  try {
+    return localStorage.getItem(CALLS_INTRO_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 export function MainScreen({ connection }: { connection: ConnectionState }) {
   const [view, setView] = useState<View>('chats');
@@ -16,6 +26,8 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
   const [scheduled, setScheduled] = useState<ScheduledMessage[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<ScheduleDraft | null>(null);
+  const [viewer, setViewer] = useState<string | null>(null);
+  const [callsIntro, setCallsIntro] = useState<{ chatId?: string } | null>(null);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -42,6 +54,13 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!viewer) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setViewer(null);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [viewer]);
+
   const closeDialog = useCallback(() => setDraft(null), []);
 
   async function logout() {
@@ -56,6 +75,14 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
     }
   }
 
+  function openCalls(chatId?: string) {
+    if (!callsIntroSeen()) {
+      setCallsIntro({ chatId });
+      return;
+    }
+    void window.wapp.openCallsWindow(chatId).catch((err) => window.alert(errorMessage(err)));
+  }
+
   const selectedChat = chats.find((c) => c.id === selectedId) ?? null;
   const pending = scheduled.filter((s) => s.status === 'pending').length;
   const attention = scheduled.filter((s) => s.status === 'failed' || s.status === 'missed').length;
@@ -67,11 +94,7 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
         <div className="rail-logo" title="WA Premium Plus">
           <Logo size={32} />
         </div>
-        <button
-          className={`rail-button${view === 'chats' ? ' active' : ''}`}
-          onClick={() => setView('chats')}
-          title="Chats"
-        >
+        <button className={`rail-button${view === 'chats' ? ' active' : ''}`} onClick={() => setView('chats')} title="Chats">
           <ChatsIcon />
         </button>
         <button
@@ -83,6 +106,9 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
           {(attention > 0 || pending > 0) && (
             <span className={`rail-badge${attention > 0 ? ' alert' : ''}`}>{attention || pending}</span>
           )}
+        </button>
+        <button className="rail-button" onClick={() => openCalls()} title="Voice and video calls (opens WhatsApp Web)">
+          <PhoneIcon />
         </button>
         <div className="rail-spacer" />
         <button className="rail-button" onClick={() => void logout()} title="Log out">
@@ -96,7 +122,7 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
             <h1>Chats</h1>
             <button
               className="button ghost small"
-              onClick={() => setDraft({ body: '', repeat: 'none' })}
+              onClick={() => setDraft({ chatIds: [], body: '' })}
               title="Schedule a message"
             >
               <ClockIcon size={16} />
@@ -116,14 +142,16 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
         {view === 'scheduled' ? (
           <ScheduledList
             items={scheduled}
-            onNew={() => setDraft({ body: '', repeat: 'none' })}
+            onNew={() => setDraft({ chatIds: [], body: '' })}
             onEdit={(item) =>
               setDraft({
                 id: item.id,
-                chatId: item.chatId,
+                target: item.target,
+                chatIds: item.target === 'chat' ? [item.chatId] : [],
                 body: item.body,
                 sendAt: Math.max(item.sendAt, Date.now() + 5 * 60_000),
-                repeat: item.repeat,
+                rule: item.rule,
+                existingAttachment: item.attachment,
               })
             }
           />
@@ -132,22 +160,72 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
             key={selectedChat.id}
             chat={selectedChat}
             connected={connected}
-            onSchedule={(body, clearComposer) =>
-              setDraft({ chatId: selectedChat.id, body, repeat: 'none', onSaved: clearComposer })
+            onOpenImage={setViewer}
+            onCall={openCalls}
+            onSchedule={(body, attachmentPath, clearComposer) =>
+              setDraft({ chatIds: [selectedChat.id], body, attachmentPath, onSaved: clearComposer })
             }
           />
         ) : (
           <div className="empty-state">
             <Logo size={72} />
             <h2>WA Premium Plus</h2>
-            <p className="muted">
-              Pick a chat to start messaging, or schedule a message to go out later.
-            </p>
+            <p className="muted">Pick a chat to start messaging, or schedule a message to go out later.</p>
           </div>
         )}
       </main>
 
       {draft && <ScheduleDialog draft={draft} chats={chats} onClose={closeDialog} />}
+
+      {viewer && (
+        <div className="lightbox" onClick={() => setViewer(null)}>
+          <img src={viewer} alt="" onClick={(e) => e.stopPropagation()} />
+          <button className="icon-button lightbox-close" title="Close" onClick={() => setViewer(null)}>
+            <CloseIcon />
+          </button>
+        </div>
+      )}
+
+      {callsIntro && (
+        <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setCallsIntro(null)}>
+          <div className="dialog narrow">
+            <header className="dialog-header">
+              <h2>Voice and video calls</h2>
+              <button className="icon-button" onClick={() => setCallsIntro(null)} title="Close">
+                <CloseIcon />
+              </button>
+            </header>
+            <p>
+              Calls open in the official <strong>WhatsApp Web</strong>, in a separate window. No open-source WhatsApp
+              library can carry call audio and video, so this is the reliable way to call from your computer.
+            </p>
+            <ol className="steps">
+              <li>The first time, the window shows a QR code. Scan it from Linked devices on your phone.</li>
+              <li>Then use the call buttons in WhatsApp Web as usual. Allow the microphone and camera when asked.</li>
+            </ol>
+            <footer className="dialog-footer">
+              <button className="button" onClick={() => setCallsIntro(null)}>
+                Cancel
+              </button>
+              <button
+                className="button primary"
+                onClick={() => {
+                  try {
+                    localStorage.setItem(CALLS_INTRO_KEY, '1');
+                  } catch {
+                    // not remembered; the intro shows again next time
+                  }
+                  const chatId = callsIntro.chatId;
+                  setCallsIntro(null);
+                  void window.wapp.openCallsWindow(chatId).catch((err) => window.alert(errorMessage(err)));
+                }}
+              >
+                Open WhatsApp Web
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

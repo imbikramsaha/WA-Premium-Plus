@@ -20,9 +20,19 @@ extraResources:
 mac:
   icon: build/icon-mac.png
   category: public.app-category.social-networking
+  # Ad-hoc signature: lets the app run on Apple Silicon without a paid Apple Developer
+  # account. macOS still asks the user to confirm the first launch (see README).
+  identity: '-'
+  hardenedRuntime: false
+  extendInfo:
+    NSMicrophoneUsageDescription: WA Premium Plus uses the microphone to record voice messages and for calls in WhatsApp Web.
+    NSCameraUsageDescription: WA Premium Plus uses the camera for video calls in WhatsApp Web.
   target:
     - target: dmg
       arch: [arm64, x64]
+
+dmg:
+  artifactName: WA-Premium-Plus-${version}-mac-${arch}.${ext}
 
 win:
   icon: build/icon.png
@@ -33,6 +43,7 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  artifactName: WA-Premium-Plus-${version}-windows-setup.${ext}
 
 linux:
   icon: build/icon.png
@@ -40,5 +51,8 @@ linux:
   target:
     - target: AppImage
       arch: [x64]
+
+appImage:
+  artifactName: WA-Premium-Plus-${version}-linux-x86_64.${ext}
 
 publish: null

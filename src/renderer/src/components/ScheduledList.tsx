@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { describeRule } from '../../../shared/schedule';
 import type { ScheduledMessage, ScheduleStatus } from '../../../shared/types';
-import { errorMessage, formatDateTime, formatRelative, repeatLabel } from '../format';
+import { errorMessage, formatDateTime, formatRelative } from '../format';
 import { Avatar } from './Avatar';
-import { ClockIcon, PlusIcon, RepeatIcon } from './Icons';
+import { ClockIcon, FileIcon, PlusIcon, RepeatIcon } from './Icons';
+import { Logo } from './Logo';
 
 const STATUS_LABELS: Record<ScheduleStatus, string> = {
   pending: 'Scheduled',
@@ -36,22 +38,35 @@ function Row({ item, onEdit }: { item: ScheduledMessage; onEdit: (item: Schedule
 
   return (
     <li className="scheduled-row">
-      <Avatar id={item.chatId} name={item.chatName} size={40} />
+      {item.target === 'status' ? (
+        <div className="status-avatar" title="My status">
+          <Logo size={40} />
+        </div>
+      ) : (
+        <Avatar id={item.chatId} name={item.chatName} size={40} />
+      )}
       <div className="scheduled-main">
         <div className="scheduled-top">
           <strong>{item.chatName}</strong>
           <span className={`status status-${item.status}`}>{STATUS_LABELS[item.status]}</span>
         </div>
-        <p className="scheduled-text">{item.body}</p>
+        {item.body && <p className="scheduled-text">{item.body}</p>}
+        {item.attachment && (
+          <span className="attachment-pill">
+            <FileIcon size={14} />
+            {item.attachment.name}
+          </span>
+        )}
         <div className="scheduled-meta">
           <ClockIcon size={14} />
           <span>{when}</span>
-          {item.repeat !== 'none' && (
+          {item.rule.repeat !== 'none' && (
             <span className="pill">
               <RepeatIcon size={12} />
-              {repeatLabel(item.repeat)}
+              {describeRule(item.rule, item.sendAt)}
             </span>
           )}
+          {item.rule.repeat !== 'none' && item.sentCount > 0 && <span className="muted">· sent {item.sentCount}×</span>}
         </div>
         {item.lastError && item.status !== 'sent' && item.status !== 'cancelled' && (
           <p className="error small">
@@ -148,8 +163,8 @@ export function ScheduledList({
             <ClockIcon size={40} />
             <h3>Nothing scheduled yet</h3>
             <p className="muted">
-              Write a message, pick a time, and WA Premium Plus sends it for you. Messages can repeat
-              every day, week or month.
+              Write a message, pick a time, and WA Premium Plus sends it for you. Send to one chat or many,
+              attach photos and documents, post to your status, and repeat on any schedule.
             </p>
             <button className="button primary" onClick={onNew}>
               Schedule a message

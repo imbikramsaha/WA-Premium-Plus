@@ -21,29 +21,60 @@
 
 WA Premium Plus is a desktop app that links to your WhatsApp account the same way WhatsApp Web does: you scan a QR code with your phone. Everything runs on your own computer. There is no server to set up, no account to create and no cost.
 
-On top of normal chatting, it adds the things WhatsApp doesn't have, starting with **message scheduling**: write a message now and have it sent later, once or on repeat.
+On top of normal chatting, it adds what WhatsApp doesn't have, starting with **message scheduling**: write a message now and have it sent later, once or on any repeating schedule.
 
-## What works today
+## Download
 
-- Link your WhatsApp by QR code
-- Chat list with unread counts, search and message previews
-- Read and send text messages, with delivery and read ticks
-- **Scheduled messages**
-  - Send once, or repeat every day, week or month
-  - Quick picks: "In 1 hour", "Tomorrow 9:00", "Monday 9:00"
-  - Edit, cancel, or "Send now" from the Scheduled screen
-  - If the computer was off at the scheduled time, the message is marked *Missed* rather than sent hours late, and you choose what to do
+Get the installer for your computer from the [latest release](https://github.com/imbikramsaha/WA-Premium-Plus/releases/latest):
+
+| Your computer | File |
+|---|---|
+| Mac with Apple silicon (M1 and later) | `WA-Premium-Plus-<version>-mac-arm64.dmg` |
+| Mac with Intel processor | `WA-Premium-Plus-<version>-mac-x64.dmg` |
+| Windows 10 or 11 | `WA-Premium-Plus-<version>-windows-setup.exe` |
+| Linux | `WA-Premium-Plus-<version>-linux-x86_64.AppImage` |
+
+The app isn't signed by Apple or Microsoft (that costs money every year), so your system asks you to confirm the first launch:
+
+- **macOS:** drag the app to Applications and open it. When macOS says it can't verify the developer, go to **System Settings → Privacy & Security** and click **Open Anyway**.
+- **Windows:** if SmartScreen appears, click **More info → Run anyway**.
+- **Linux:** make the file executable (`chmod +x WA-Premium-Plus-*.AppImage`) and run it.
+
+Then, in WhatsApp on your phone, open **Linked devices → Link a device** and scan the QR code.
+
+## Features
+
+**Chats**
+- Chat list with unread counts, search, and All / Unread / Groups filters
+- Text messages with delivery and read ticks; edited and deleted messages shown as such
+- Photos, videos, stickers, voice notes and documents: view, play, open and save
+- Send photos, videos and documents (pick, drag and drop, or paste), with a caption
+- Record and send voice notes
+- Group sender names, and a group info panel with members, admins and the invite link
+- Load older messages; desktop notifications for new ones
+
+**Scheduled messages**
+- Send once, or repeat every day, every weekday, every week, month or year
+- Custom repeats: every N days, weeks or months, on chosen days of the week, with an optional end date
+- Send to several chats at once, attach a photo, video or document, or post to your status
+- A preview of the next send times before you save
+- Edit, cancel, or "Send now"; if the computer was off at the scheduled time, the message is marked *Missed* rather than sent hours late
+
+**Calls**
+- Voice and video calls open the official WhatsApp Web in a separate window (see Known limitations)
+
+**Runs in the background**
 - Keeps running in the system tray when you close the window, so scheduled messages still go out
 - Optional "Open at login" (macOS and Windows)
-- Desktop notifications for new messages
 - Light and dark themes that follow your system
 
-See the [roadmap](docs/ROADMAP.md) for what comes next: media, groups, status, multiple numbers, automation rules and more.
+See the [roadmap](docs/ROADMAP.md) for what comes next.
 
 ## Known limitations
 
-- **No voice or video calls.** No open-source WhatsApp library supports call audio or video, so calls stay on your phone.
+- **Calls use WhatsApp Web.** No open-source WhatsApp library can carry call audio or video, so the call buttons open the official WhatsApp Web in its own window. Link it once by scanning its QR code. Whether WhatsApp Web can make calls depends on WhatsApp's rollout for your account; if it can't, use the official WhatsApp desktop app for calls.
 - **Keep the app running for scheduled messages.** Messages are sent from your computer. If it is off or asleep at the scheduled time, the message waits; after an hour it is marked *Missed*.
+- **Media from before you linked** may not be downloadable; open it on your phone.
 - **Bulk messaging can get a number banned.** WA Premium Plus connects as an unofficial linked device. Normal use is fine, but sending large volumes of messages, especially to people who haven't messaged you, can get a number banned by WhatsApp.
 - **Features we won't build:** keeping messages the sender deleted, saving view-once media, and other modded-client tricks that break other people's privacy expectations.
 
@@ -66,9 +97,7 @@ Your chats, scheduled messages and WhatsApp login stay in the app's data folder 
 | Windows | `%APPDATA%\WA Premium Plus` |
 | Linux | `~/.config/WA Premium Plus` |
 
-## Getting started
-
-Installers for macOS, Windows and Linux will be published on the [Releases](https://github.com/imbikramsaha/WA-Premium-Plus/releases) page. Until then, run it from source:
+## Run from source
 
 1. Install [Node.js](https://nodejs.org) 22.18 or newer.
 2. Clone and start the app:
@@ -85,10 +114,11 @@ Installers for macOS, Windows and Linux will be published on the [Releases](http
 | Command | What it does |
 |---|---|
 | `npm run dev` | Start the app with hot reload |
-| `npm test` | Run the scheduler tests |
+| `npm test` | Run the tests (scheduler, repeat rules, database, voice-note conversion) |
 | `npm run typecheck` | Type-check the main process and the window |
 | `npm run build` | Build into `out/` |
 | `npm run dist` | Build installers for the current OS into `release/` |
+| `git tag vX.Y.Z && git push --tags` | Build installers for all platforms on GitHub and publish a release |
 | `npm run icons` | Regenerate app and tray icons from the logo geometry |
 
 Environment variables for development:
@@ -103,7 +133,7 @@ src/main/       background process: WhatsApp connection, database, scheduler, tr
 src/preload/    the bridge that exposes a small API to the window
 src/renderer/   the window (React)
 src/shared/     types shared by both sides
-tests/          scheduler tests (node:test)
+tests/          tests (node:test)
 ```
 
 ## Contributing

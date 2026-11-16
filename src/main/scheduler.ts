@@ -1,9 +1,10 @@
 // Sends scheduled messages when they fall due.
 // Runs in the main process, so it keeps working while the window is closed to the tray.
 
-import type { Repeat } from '../shared/types';
+import { nextOccurrence } from '../shared/schedule.ts';
 import type { DueMessage, Store } from './store';
-import type { WhatsApp } from './whatsapp';
+
+export { nextOccurrence };
 
 const TICK_MS = 15_000;
 /** If the app was off for longer than this past the send time, the message counts as missed. */
@@ -13,34 +14,10 @@ const RETRY_FOR_MS = 10 * 60 * 1000;
 /** Pause between consecutive sends, so a backlog doesn't go out as a burst. */
 const GAP_BETWEEN_SENDS_MS = 2_000;
 
-/**
- * Next occurrence of a repeating schedule strictly after `after`.
- * Occurrences are counted from the original time (`anchorAt`), so a message scheduled
- * for the 31st goes out on the last day of shorter months without drifting.
- */
-export function nextOccurrence(anchorAt: number, repeat: Repeat, after: number): number | null {
-  if (repeat === 'none') return null;
-  const anchor = new Date(anchorAt);
-  for (let n = 1; ; n++) {
-    let next: Date;
-    if (repeat === 'monthly') {
-      const year = anchor.getFullYear();
-      const month = anchor.getMonth() + n;
-      const lastDay = new Date(year, month + 1, 0).getDate();
-      next = new Date(
-        year,
-        month,
-        Math.min(anchor.getDate(), lastDay),
-        anchor.getHours(),
-        anchor.getMinutes(),
-        anchor.getSeconds(),
-      );
-    } else {
-      next = new Date(anchor);
-      next.setDate(anchor.getDate() + n * (repeat === 'weekly' ? 7 : 1));
-    }
-    if (next.getTime() > after) return next.getTime();
-  }
+/** The parts of the WhatsApp connection the scheduler needs. */
+export interface Sender {
+  readonly isOpen: boolean;
+  sendScheduled(item: DueMessage): Promise<void>;
 }
 
 function errorMessage(err: unknown): string {
@@ -48,9 +25,6 @@ function errorMessage(err: unknown): string {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** The parts of the WhatsApp connection the scheduler needs. */
-type Sender = Pick<WhatsApp, 'isOpen' | 'sendText'>;
 
 export class Scheduler {
   private timer: NodeJS.Timeout | undefined;
@@ -109,9 +83,9 @@ export class Scheduler {
         continue;
       }
       try {
-        await this.whatsapp.sendText(item.chatId, item.body);
+        await this.whatsapp.sendScheduled(item);
         const sentAt = Date.now();
-        const next = nextOccurrence(item.anchorAt, item.repeat, sentAt);
+        const next = nextOccurrence(item.anchorAt, item.rule, sentAt);
         if (next === null) {
           this.store.setScheduledStatus(item.id, 'sent', { sentAt, error: null });
         } else {
@@ -119,9 +93,7 @@ export class Scheduler {
         }
       } catch (err) {
         const giveUp = Date.now() - item.sendAt > RETRY_FOR_MS;
-        this.store.setScheduledStatus(item.id, giveUp ? 'failed' : 'pending', {
-          error: errorMessage(err),
-        });
+        this.store.setScheduledStatus(item.id, giveUp ? 'failed' : 'pending', { error: errorMessage(err) });
       }
       this.onChange();
       await sleep(this.gapMs);
@@ -129,7 +101,7 @@ export class Scheduler {
   }
 
   private skipMissed(item: DueMessage, now: number): void {
-    const next = nextOccurrence(item.anchorAt, item.repeat, now);
+    const next = nextOccurrence(item.anchorAt, item.rule, now);
     if (next === null) {
       this.store.setScheduledStatus(item.id, 'missed', {
         error: 'WA Premium Plus was not running or not connected at the scheduled time.',

@@ -12,27 +12,31 @@
 - [x] Chat list with unread counts and search
 - [x] Text conversations with delivery and read ticks
 - [x] Desktop notifications
-- [ ] Load older messages
+- [x] Load older messages
 - [ ] Link by phone number (pairing code) as well as QR
 - [ ] Profile pictures
-- [ ] Media: view and send images, video, documents, voice notes, stickers
-- [ ] Replies, reactions, edits, deletes, forwards
+- [x] Media: view and send images, video, documents, voice notes, stickers
+- [x] Show edited and deleted messages
+- [ ] Replies, reactions, forwards
 - [ ] Polls, locations and contact cards
-- [ ] Groups: member list, admin tools, invite links
+- [x] Groups: sender names, member list, admins, invite link
+- [ ] Group admin tools (add/remove members, edit info)
 - [ ] Status: view and post
 - [ ] Channels
 - [ ] Archive, pin, mute, labels
-- [ ] Call log (calls themselves stay on the phone)
+- [x] Voice and video calls through the official WhatsApp Web window
+- [ ] Call log
 - [ ] Multiple WhatsApp numbers
 
 ## Scheduling
 - [x] Scheduled messages: one-off and repeating (daily, weekly, monthly)
 - [x] Edit, cancel, send now; missed and failed handling
-- [ ] Schedule media and documents
-- [ ] Custom repeat rules (weekdays only, every N days, end date)
+- [x] Schedule photos, videos and documents
+- [x] Custom repeat rules (weekdays, every N days/weeks/months, chosen weekdays, yearly, end date)
 - [ ] Send in the recipient's time zone
-- [ ] Scheduled statuses with a content calendar
-- [ ] Send one scheduled message to several chats
+- [x] Scheduled status posts
+- [ ] Content calendar view
+- [x] Send one scheduled message to several chats
 
 ## Automation
 - [ ] Quick replies with `/shortcut`
@@ -54,8 +58,8 @@
 - [ ] Analytics: message volume and response times
 
 ## Distribution
-- [ ] Release builds published to GitHub Releases
-- [ ] Signed and notarized macOS build
+- [x] Installers published to GitHub Releases (macOS DMG, Windows installer, Linux AppImage)
+- [ ] Signed and notarized macOS build (needs a paid Apple Developer account)
 - [ ] Signed Windows installer
 - [ ] Linux .deb in addition to AppImage
 - [ ] Auto-update

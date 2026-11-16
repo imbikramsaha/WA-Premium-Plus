@@ -1,6 +1,8 @@
-import { join } from 'node:path';
-import { app, BrowserWindow, Menu, nativeTheme, Notification, shell, Tray } from 'electron';
+import { basename, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { app, BrowserWindow, Menu, nativeTheme, net, Notification, protocol, shell, Tray } from 'electron';
 import type { AppEvent } from '../shared/types';
+import { openCallsWindow } from './calls';
 import { registerIpc } from './ipc';
 import { Scheduler } from './scheduler';
 import { Store } from './store';
@@ -10,6 +12,12 @@ const APP_NAME = 'WA Premium Plus';
 const resourcesDir = app.isPackaged
   ? join(process.resourcesPath, 'resources')
   : join(import.meta.dirname, '../../resources');
+
+// Downloaded media is served to the window as wapp-media://media/<file>, which supports
+// streaming and seeking for audio and video.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'wapp-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+]);
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -133,11 +141,15 @@ function main(): void {
   if (process.platform === 'win32') app.setAppUserModelId('com.wapremiumplus.app');
 
   const dataDir = app.getPath('userData');
+  const mediaDir = join(dataDir, 'media');
+  const attachmentsDir = join(dataDir, 'attachments');
   const store = new Store(join(dataDir, 'wapp.db'));
 
   let scheduler: Scheduler | null = null;
   const whatsapp = new WhatsApp({
     authDir: join(dataDir, 'auth'),
+    mediaDir,
+    tempDir: join(app.getPath('temp'), 'wa-premium-plus'),
     store,
     emit: (event) => {
       send(event);
@@ -147,7 +159,7 @@ function main(): void {
       if (mainWindow?.isFocused() || !Notification.isSupported()) return;
       const notification = new Notification({
         title: chatName,
-        body: message.body || 'New message',
+        body: message.body || (message.kind === 'text' ? 'New message' : `Sent ${message.kind === 'audio' ? 'a voice message' : `a ${message.kind}`}`),
       });
       notification.on('click', showWindow);
       notification.show();
@@ -159,10 +171,17 @@ function main(): void {
     store,
     whatsapp,
     scheduler,
+    attachmentsDir,
+    mediaDir,
     onScheduledChanged: () => send({ type: 'scheduled-changed' }),
+    openCallsWindow: (chatId) => openCallsWindow(join(resourcesDir, 'icon.png'), chatId),
   });
 
   void app.whenReady().then(() => {
+    protocol.handle('wapp-media', (request) => {
+      const name = basename(decodeURIComponent(new URL(request.url).pathname));
+      return net.fetch(pathToFileURL(join(mediaDir, name)).toString(), { headers: request.headers });
+    });
     createWindow(!startedHidden());
     createTray();
     void whatsapp.start();
