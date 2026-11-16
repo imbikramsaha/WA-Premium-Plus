@@ -94,9 +94,26 @@ export interface GroupInfo {
   announce: boolean;
   /** Only admins can edit group info. */
   restrict: boolean;
+  /** Only admins can add members. */
+  adminsAddMembers: boolean;
+  /** Admins must approve people who join with the invite link. */
+  joinApproval: boolean;
+  /** Disappearing-message timer in seconds; 0 when off. */
+  ephemeralSeconds: number;
   amAdmin: boolean;
   participants: GroupParticipantInfo[];
 }
+
+/** A change to a group's settings that can be scheduled. Applying it requires being an admin. */
+export type GroupAction =
+  | { type: 'announce'; enabled: boolean }
+  | { type: 'restrict'; enabled: boolean }
+  | { type: 'memberAdd'; adminsOnly: boolean }
+  | { type: 'joinApproval'; enabled: boolean }
+  | { type: 'ephemeral'; seconds: number }
+  | { type: 'subject'; text: string }
+  | { type: 'description'; text: string }
+  | { type: 'revokeInvite' };
 
 // --- Scheduling ---
 
@@ -122,8 +139,8 @@ export interface AttachmentInfo {
   size: number;
 }
 
-/** 'chat' sends to a chat; 'status' posts to your WhatsApp status. */
-export type ScheduleTarget = 'chat' | 'status';
+/** 'chat' sends to a chat; 'status' posts to your status; 'group' changes a group's settings. */
+export type ScheduleTarget = 'chat' | 'status' | 'group';
 
 export type ScheduleStatus = 'pending' | 'sent' | 'failed' | 'missed' | 'cancelled';
 
@@ -138,6 +155,8 @@ export interface ScheduledMessage {
   rule: RepeatRule;
   status: ScheduleStatus;
   attachment?: AttachmentInfo;
+  /** For target 'group': the settings change to apply. */
+  groupAction?: GroupAction;
   lastError?: string;
   lastSentAt?: number;
   sentCount: number;
@@ -156,6 +175,13 @@ export interface ScheduleInput {
    * undefined keeps the current one when editing.
    */
   attachmentPath?: string | null;
+  /** For target 'group': the settings change to apply. */
+  groupAction?: GroupAction;
+  /**
+   * For on/off group settings: also schedule the opposite change at this time (Unix ms),
+   * with the same repeat rule. For example, lock at 22:00 and open again at 07:00.
+   */
+  revertAt?: number;
 }
 
 /** A file to send right away, either from disk or pasted bytes. */

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { describeGroupAction, EPHEMERAL_OPTIONS, GROUP_ACTION_TYPES, inverseGroupAction } from '../../../shared/group-actions';
 import { describeRule, firstOccurrence, nextOccurrence } from '../../../shared/schedule';
-import type { AttachmentInfo, ChatSummary, Repeat, RepeatRule, ScheduleTarget } from '../../../shared/types';
+import type { AttachmentInfo, ChatSummary, GroupAction, Repeat, RepeatRule, ScheduleTarget } from '../../../shared/types';
 import { errorMessage, formatBytes, formatDateTime, formatTime, fromLocalInputValue, toLocalInputValue } from '../format';
 import { Avatar } from './Avatar';
 import { CloseIcon, FileIcon, PaperclipIcon, SearchIcon } from './Icons';
@@ -17,6 +18,8 @@ export interface ScheduleDraft {
   attachmentPath?: string;
   /** The current attachment of a scheduled message being edited. */
   existingAttachment?: AttachmentInfo;
+  /** For group settings changes. */
+  groupAction?: GroupAction;
   /** Called after a successful save. */
   onSaved?: () => void;
 }
@@ -55,6 +58,116 @@ function toDateInput(ms: number): string {
   return toLocalInputValue(ms).slice(0, 10);
 }
 
+function defaultAction(type: GroupAction['type']): GroupAction {
+  switch (type) {
+    case 'announce':
+    case 'restrict':
+    case 'joinApproval':
+      return { type, enabled: true };
+    case 'memberAdd':
+      return { type, adminsOnly: true };
+    case 'ephemeral':
+      return { type, seconds: 86_400 };
+    case 'subject':
+    case 'description':
+      return { type, text: '' };
+    case 'revokeInvite':
+      return { type };
+  }
+}
+
+/** The switch-back time: the given time of day on the change's day, or the next day if earlier. */
+function revertTimeAfter(changeAt: number, timeOfDay: string): number {
+  const [h = 0, m = 0] = timeOfDay.split(':').map(Number);
+  const d = new Date(changeAt);
+  d.setHours(h, m, 0, 0);
+  if (d.getTime() <= changeAt) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+
+/** Two-option toggle in the dialog's segmented style. */
+function Choice({ options, value, onChange }: { options: Array<[string, boolean]>; value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="segmented">
+      {options.map(([label, v]) => (
+        <button key={label} type="button" className={value === v ? 'active' : ''} onClick={() => onChange(v)}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function GroupActionFields({ action, onChange }: { action: GroupAction; onChange: (a: GroupAction) => void }) {
+  return (
+    <>
+      <label className="field">
+        <span className="field-label">Setting to change</span>
+        <select value={action.type} onChange={(e) => onChange(defaultAction(e.target.value as GroupAction['type']))}>
+          {GROUP_ACTION_TYPES.map((t) => (
+            <option key={t.type} value={t.type}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="field">
+        <span className="field-label">Change it to</span>
+        {(action.type === 'announce' || action.type === 'restrict') && (
+          <Choice
+            options={[['Only admins', true], ['Everyone', false]]}
+            value={action.enabled}
+            onChange={(enabled) => onChange({ type: action.type, enabled })}
+          />
+        )}
+        {action.type === 'memberAdd' && (
+          <Choice
+            options={[['Only admins', true], ['Everyone', false]]}
+            value={action.adminsOnly}
+            onChange={(adminsOnly) => onChange({ type: 'memberAdd', adminsOnly })}
+          />
+        )}
+        {action.type === 'joinApproval' && (
+          <Choice
+            options={[['On', true], ['Off', false]]}
+            value={action.enabled}
+            onChange={(enabled) => onChange({ type: 'joinApproval', enabled })}
+          />
+        )}
+        {action.type === 'ephemeral' && (
+          <select value={action.seconds} onChange={(e) => onChange({ type: 'ephemeral', seconds: Number(e.target.value) })}>
+            {EPHEMERAL_OPTIONS.map((o) => (
+              <option key={o.seconds} value={o.seconds}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        )}
+        {action.type === 'subject' && (
+          <input
+            value={action.text}
+            maxLength={100}
+            placeholder="New group name"
+            onChange={(e) => onChange({ type: 'subject', text: e.target.value })}
+          />
+        )}
+        {action.type === 'description' && (
+          <textarea
+            rows={3}
+            value={action.text}
+            maxLength={2048}
+            placeholder="New description (leave empty to clear it)"
+            onChange={(e) => onChange({ type: 'description', text: e.target.value })}
+          />
+        )}
+        {action.type === 'revokeInvite' && (
+          <p className="muted small">The current invite link stops working and WhatsApp makes a new one.</p>
+        )}
+      </div>
+    </>
+  );
+}
+
 export function ScheduleDialog({
   draft,
   chats,
@@ -83,9 +196,14 @@ export function ScheduleDialog({
   const [attachmentName, setAttachmentName] = useState<string | undefined>(
     draft.attachmentPath ? draft.attachmentPath.split(/[\\/]/).pop() : draft.existingAttachment?.name,
   );
+  const [action, setAction] = useState<GroupAction>(draft.groupAction ?? defaultAction('announce'));
+  const [revertOn, setRevertOn] = useState(false);
+  const [revertTime, setRevertTime] = useState('07:00');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const isGroup = target === 'group';
+  const inverse = inverseGroupAction(action);
 
   const sendAt = fromLocalInputValue(when);
   const anchor = Number.isNaN(sendAt) ? Date.now() : sendAt;
@@ -125,12 +243,41 @@ export function ScheduleDialog({
     return times;
   }, [sendAt, rule]);
 
+  const revertAt = isGroup && revertOn && inverse && !editing && !Number.isNaN(sendAt) ? revertTimeAfter(sendAt, revertTime) : undefined;
+  const revertPreview = useMemo(() => {
+    if (revertAt === undefined) return [];
+    const first = firstOccurrence(revertAt, rule);
+    const times = [first];
+    let after = first;
+    while (times.length < 3 && rule.repeat !== 'none') {
+      const next = nextOccurrence(revertAt, rule, after);
+      if (next === null) break;
+      times.push(next);
+      after = next;
+    }
+    return times;
+  }, [revertAt, rule]);
+
   const selected = chatIds.map((id) => chats.find((c) => c.id === id) ?? { id, name: id, isGroup: false, unreadCount: 0 });
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = q ? chats.filter((c) => c.name.toLowerCase().includes(q) || c.id.includes(q)) : chats;
+    const pool = isGroup ? chats.filter((c) => c.isGroup) : chats;
+    const list = q ? pool.filter((c) => c.name.toLowerCase().includes(q) || c.id.includes(q)) : pool;
     return list.slice(0, 60);
-  }, [chats, query]);
+  }, [chats, query, isGroup]);
+
+  function switchTarget(next: ScheduleTarget) {
+    setTarget(next);
+    setError(null);
+    // Group changes only apply to groups; drop chats that aren't.
+    if (next === 'group') {
+      setChatIds((prev) => {
+        const kept = prev.filter((id) => id.endsWith('@g.us'));
+        if (kept.length === 0) setPicking(true);
+        return kept;
+      });
+    }
+  }
 
   const presets = [
     { label: 'In 1 hour', at: () => roundUpToFiveMinutes(Date.now() + 60 * 60_000) },
@@ -156,8 +303,10 @@ export function ScheduleDialog({
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (target === 'chat' && chatIds.length === 0) return setError('Choose who to send the message to.');
+    if (isGroup && chatIds.length === 0) return setError('Choose at least one group.');
+    if (isGroup && action.type === 'subject' && !action.text.trim()) return setError('Enter the new group name.');
     const hasAttachment = attachmentPath ? true : attachmentPath === undefined && Boolean(attachmentName);
-    if (!body.trim() && !hasAttachment) return setError('Write a message or attach a file.');
+    if (!isGroup && !body.trim() && !hasAttachment) return setError('Write a message or attach a file.');
     if (Number.isNaN(sendAt)) return setError('Pick a date and time.');
     if (sendAt < Date.now() - 60_000) return setError('Pick a time in the future.');
     if (repeat === 'custom' && unit === 'week' && weekdays.length === 0) return setError('Pick at least one day.');
@@ -165,7 +314,9 @@ export function ScheduleDialog({
     setSaving(true);
     setError(null);
     try {
-      const input = { target, chatIds: target === 'status' ? [] : chatIds, body: body.trim(), sendAt, rule, attachmentPath };
+      const input = isGroup
+        ? { target, chatIds, body: '', sendAt, rule, groupAction: action, revertAt }
+        : { target, chatIds: target === 'status' ? [] : chatIds, body: body.trim(), sendAt, rule, attachmentPath };
       if (draft.id === undefined) await window.wapp.createScheduled(input);
       else await window.wapp.updateScheduled(draft.id, input);
       draft.onSaved?.();
@@ -190,25 +341,39 @@ export function ScheduleDialog({
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <form className="dialog" onSubmit={submit} aria-labelledby="schedule-title">
         <header className="dialog-header">
-          <h2 id="schedule-title">{editing ? 'Edit scheduled message' : 'Schedule a message'}</h2>
+          <h2 id="schedule-title">
+            {isGroup ? (editing ? 'Edit group change' : 'Schedule a group change') : editing ? 'Edit scheduled message' : 'Schedule a message'}
+          </h2>
           <button type="button" className="icon-button" onClick={onClose} title="Close">
             <CloseIcon />
           </button>
         </header>
 
-        <div className="segmented" role="tablist">
-          <button type="button" className={target === 'chat' ? 'active' : ''} onClick={() => setTarget('chat')}>
-            Send to chats
-          </button>
-          <button type="button" className={target === 'status' ? 'active' : ''} onClick={() => setTarget('status')}>
-            Post to my status
-          </button>
-        </div>
+        {!(editing && isGroup) && (
+          <div className="segmented" role="tablist">
+            <button type="button" className={target === 'chat' ? 'active' : ''} onClick={() => switchTarget('chat')}>
+              Message
+            </button>
+            <button type="button" className={target === 'status' ? 'active' : ''} onClick={() => switchTarget('status')}>
+              My status
+            </button>
+            {!editing && (
+              <button type="button" className={isGroup ? 'active' : ''} onClick={() => switchTarget('group')}>
+                Group settings
+              </button>
+            )}
+          </div>
+        )}
 
-        {target === 'chat' ? (
+        {target !== 'status' ? (
           <div className="field">
             <span className="field-label">
-              To{!editing && chatIds.length > 1 ? ` · ${chatIds.length} chats (each gets its own copy)` : ''}
+              {isGroup ? 'Groups' : 'To'}
+              {!editing && chatIds.length > 1
+                ? isGroup
+                  ? ` · ${chatIds.length} groups`
+                  : ` · ${chatIds.length} chats (each gets its own copy)`
+                : ''}
             </span>
             {selected.length > 0 && (
               <div className="recipient-chips">
@@ -234,7 +399,7 @@ export function ScheduleDialog({
               <div className="picker">
                 <div className="search">
                   <SearchIcon size={16} />
-                  <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search chats" />
+                  <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={isGroup ? 'Search groups' : 'Search chats'} />
                 </div>
                 <ul className="picker-list">
                   {matches.map((c) => (
@@ -250,7 +415,7 @@ export function ScheduleDialog({
                       </button>
                     </li>
                   ))}
-                  {matches.length === 0 && <li className="list-empty">No chats found.</li>}
+                  {matches.length === 0 && <li className="list-empty">{isGroup ? 'No groups found.' : 'No chats found.'}</li>}
                 </ul>
                 {chatIds.length > 0 && (
                   <button type="button" className="button small picker-done" onClick={() => setPicking(false)}>
@@ -267,6 +432,15 @@ export function ScheduleDialog({
           </p>
         )}
 
+        {isGroup ? (
+          <>
+            <GroupActionFields action={action} onChange={setAction} />
+            <p className="hint">
+              You need to be an admin of the group. The change is made from this computer at the scheduled time.
+            </p>
+          </>
+        ) : (
+        <>
         <label className="field">
           <span className="field-label">{attachmentName && attachmentPath !== null ? 'Caption' : 'Message'}</span>
           <textarea
@@ -316,6 +490,8 @@ export function ScheduleDialog({
             }}
           />
         </div>
+        </>
+        )}
 
         <div className="field">
           <span className="field-label">When</span>
@@ -392,20 +568,45 @@ export function ScheduleDialog({
           )}
         </div>
 
+        {isGroup && inverse && !editing && (
+          <div className="field">
+            <label className="check-row">
+              <input type="checkbox" checked={revertOn} onChange={(e) => setRevertOn(e.target.checked)} />
+              <span>Switch back automatically</span>
+            </label>
+            {revertOn && (
+              <div className="revert-row">
+                <span>At</span>
+                <input type="time" value={revertTime} onChange={(e) => setRevertTime(e.target.value)} />
+                <span className="muted">→ {describeGroupAction(inverse)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {preview.length > 0 && (
           <div className="schedule-preview">
-            <strong>{describeRule(rule, anchor)}</strong>
+            <strong>
+              {isGroup ? `${describeGroupAction(action)} · ` : ''}
+              {describeRule(rule, anchor)}
+            </strong>
             <span className="muted">
-              {preview.length === 1 ? 'Sends ' : 'Next sends: '}
+              {preview.length === 1 ? (isGroup ? 'Changes ' : 'Sends ') : isGroup ? 'Next changes: ' : 'Next sends: '}
               {preview.map((t) => formatDateTime(t)).join(' · ')}
               {rule.repeat !== 'none' && preview.length === 4 ? ' …' : ''}
             </span>
+            {revertPreview.length > 0 && inverse && (
+              <span className="muted">
+                Switches back ({describeGroupAction(inverse).toLowerCase()}): {revertPreview.map((t) => formatDateTime(t)).join(' · ')}
+                {rule.repeat !== 'none' && revertPreview.length === 3 ? ' …' : ''}
+              </span>
+            )}
           </div>
         )}
 
         <p className="fine-print">
-          Messages are sent from this computer, so keep WA Premium Plus running (it stays in the tray when you close the
-          window).
+          {isGroup ? 'Changes are made' : 'Messages are sent'} from this computer, so keep WA Premium Plus running (it
+          stays in the tray when you close the window).
         </p>
 
         {error && <p className="error">{error}</p>}
@@ -419,9 +620,11 @@ export function ScheduleDialog({
               ? 'Saving…'
               : editing
                 ? 'Save changes'
-                : target === 'chat' && chatIds.length > 1
-                  ? `Schedule for ${chatIds.length} chats`
-                  : 'Schedule'}
+                : chatIds.length > 1 && target !== 'status'
+                  ? `Schedule for ${chatIds.length} ${isGroup ? 'groups' : 'chats'}`
+                  : isGroup && revertAt !== undefined
+                    ? 'Schedule both changes'
+                    : 'Schedule'}
           </button>
         </footer>
       </form>

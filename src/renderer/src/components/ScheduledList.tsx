@@ -1,9 +1,10 @@
 import { useState } from 'react';
+import { describeGroupAction } from '../../../shared/group-actions';
 import { describeRule } from '../../../shared/schedule';
 import type { ScheduledMessage, ScheduleStatus } from '../../../shared/types';
 import { errorMessage, formatDateTime, formatRelative } from '../format';
 import { Avatar } from './Avatar';
-import { ClockIcon, FileIcon, PlusIcon, RepeatIcon } from './Icons';
+import { ClockIcon, FileIcon, PlusIcon, RepeatIcon, UsersIcon } from './Icons';
 import { Logo } from './Logo';
 
 const STATUS_LABELS: Record<ScheduleStatus, string> = {
@@ -50,6 +51,12 @@ function Row({ item, onEdit }: { item: ScheduledMessage; onEdit: (item: Schedule
           <strong>{item.chatName}</strong>
           <span className={`status status-${item.status}`}>{STATUS_LABELS[item.status]}</span>
         </div>
+        {item.target === 'group' && item.groupAction && (
+          <p className="scheduled-text group-change">
+            <UsersIcon size={15} />
+            {describeGroupAction(item.groupAction)}
+          </p>
+        )}
         {item.body && <p className="scheduled-text">{item.body}</p>}
         {item.attachment && (
           <span className="attachment-pill">

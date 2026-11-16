@@ -27,7 +27,7 @@ import makeWASocket, {
 } from 'baileys';
 import pino from 'pino';
 import QRCode from 'qrcode';
-import type { AppEvent, ChatMessage, ConnectionState, GroupInfo } from '../shared/types';
+import type { AppEvent, ChatMessage, ConnectionState, GroupAction, GroupInfo } from '../shared/types';
 import { describeFile, mediaFileName, writeTempFile } from './media';
 import { parseMessage, reviveMessage, toAck } from './messages';
 import { webmOpusToOgg } from './opus-ogg';
@@ -213,9 +213,14 @@ export class WhatsApp {
     }
   }
 
-  /** Sends a due scheduled message, to a chat or to the user's status. */
-  async sendScheduled(item: Pick<DueMessage, 'target' | 'chatId' | 'body' | 'attachment'>): Promise<void> {
+  /** Carries out a due scheduled item: a message, a status post or a group settings change. */
+  async sendScheduled(item: Pick<DueMessage, 'target' | 'chatId' | 'body' | 'attachment' | 'groupAction'>): Promise<void> {
     const { target, body, attachment } = item;
+    if (target === 'group') {
+      if (!item.groupAction) throw new Error('This scheduled group change has no setting to apply.');
+      await this.applyGroupAction(item.chatId, item.groupAction);
+      return;
+    }
     const content: AnyMessageContent = attachment
       ? fileContent(attachment.path, attachment, body)
       : { text: body };
@@ -330,11 +335,61 @@ export class WhatsApp {
     await sock.readMessages(keys).catch(() => undefined);
   }
 
+  /** IDs the linked account appears under (phone number and privacy ID). */
+  private myIds(sock: WASocket): Set<string | undefined> {
+    return new Set([this.state.me?.id, sock.user?.lid ? jidNormalizedUser(sock.user.lid) : undefined]);
+  }
+
+  private amAdminOf(sock: WASocket, meta: Awaited<ReturnType<WASocket['groupMetadata']>>): boolean {
+    const mine = this.myIds(sock);
+    return meta.participants.some((p) => {
+      const ids = [p.id, p.lid, p.phoneNumber].filter(Boolean).map((id) => jidNormalizedUser(id!));
+      return ids.some((id) => mine.has(id)) && (p.admin === 'admin' || p.admin === 'superadmin');
+    });
+  }
+
+  /** Changes a group setting. WhatsApp only allows this for group admins. */
+  async applyGroupAction(chatId: string, action: GroupAction): Promise<void> {
+    const sock = this.requireSocket();
+    const meta = await sock.groupMetadata(chatId);
+    if (!this.amAdminOf(sock, meta)) {
+      throw new Error("You're not an admin of this group, so its settings can't be changed.");
+    }
+    switch (action.type) {
+      case 'announce':
+        await sock.groupSettingUpdate(chatId, action.enabled ? 'announcement' : 'not_announcement');
+        break;
+      case 'restrict':
+        await sock.groupSettingUpdate(chatId, action.enabled ? 'locked' : 'unlocked');
+        break;
+      case 'memberAdd':
+        await sock.groupMemberAddMode(chatId, action.adminsOnly ? 'admin_add' : 'all_member_add');
+        break;
+      case 'joinApproval':
+        await sock.groupJoinApprovalMode(chatId, action.enabled ? 'on' : 'off');
+        break;
+      case 'ephemeral':
+        await sock.groupToggleEphemeral(chatId, action.seconds);
+        break;
+      case 'subject':
+        await sock.groupUpdateSubject(chatId, action.text);
+        this.opts.store.upsertChat({ id: chatId, name: action.text });
+        this.opts.emit({ type: 'chats-changed' });
+        break;
+      case 'description':
+        await sock.groupUpdateDescription(chatId, action.text || undefined);
+        break;
+      case 'revokeInvite':
+        await sock.groupRevokeInvite(chatId);
+        break;
+    }
+  }
+
   async getGroupInfo(chatId: string): Promise<GroupInfo> {
     const sock = this.requireSocket();
     const meta = await sock.groupMetadata(chatId);
     const { store } = this.opts;
-    const myIds = new Set([this.state.me?.id, sock.user?.lid ? jidNormalizedUser(sock.user.lid) : undefined]);
+    const myIds = this.myIds(sock);
     const participants = meta.participants.map((p) => {
       const pn = p.phoneNumber ? jidNormalizedUser(p.phoneNumber) : isPnUser(p.id) ? jidNormalizedUser(p.id) : undefined;
       const lid = p.lid ? jidNormalizedUser(p.lid) : isLidUser(p.id) ? jidNormalizedUser(p.id) : undefined;
@@ -364,6 +419,9 @@ export class WhatsApp {
       createdAt: meta.creation,
       announce: Boolean(meta.announce),
       restrict: Boolean(meta.restrict),
+      adminsAddMembers: meta.memberAddMode === false,
+      joinApproval: Boolean(meta.joinApprovalMode),
+      ephemeralSeconds: meta.ephemeralDuration ?? 0,
       amAdmin: participants.some((p) => p.isMe && p.isAdmin),
       participants,
     };

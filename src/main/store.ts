@@ -7,6 +7,7 @@ import type {
   AttachmentKind,
   ChatMessage,
   ChatSummary,
+  GroupAction,
   MediaInfo,
   MessageAck,
   MessageKind,
@@ -60,8 +61,8 @@ CREATE TABLE IF NOT EXISTS scheduled_messages (
 CREATE INDEX IF NOT EXISTS scheduled_due ON scheduled_messages (status, send_at);
 `;
 
-/** Columns added in schema version 2, as [table, column, definition]. */
-const V2_COLUMNS: Array<[string, string, string]> = [
+/** Columns added after version 1 (versions 2 and 3), as [table, column, definition]. */
+const ADDED_COLUMNS: Array<[string, string, string]> = [
   ['messages', 'raw', 'TEXT'],
   ['messages', 'mime', 'TEXT'],
   ['messages', 'file_name', 'TEXT'],
@@ -81,9 +82,11 @@ const V2_COLUMNS: Array<[string, string, string]> = [
   ['scheduled_messages', 'attachment_kind', 'TEXT'],
   ['scheduled_messages', 'attachment_size', 'INTEGER'],
   ['scheduled_messages', 'sent_count', 'INTEGER NOT NULL DEFAULT 0'],
+  // version 3: scheduled group settings changes
+  ['scheduled_messages', 'group_action', 'TEXT'],
 ];
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export interface ChatUpsert {
   id: string;
@@ -117,6 +120,7 @@ export interface NewSchedule {
   anchorAt?: number;
   rule: RepeatRule;
   attachment?: Attachment | null;
+  groupAction?: GroupAction | null;
 }
 
 export interface DueMessage {
@@ -128,6 +132,7 @@ export interface DueMessage {
   sendAt: number;
   rule: RepeatRule;
   attachment?: Attachment;
+  groupAction?: GroupAction;
 }
 
 interface MessageRow {
@@ -174,6 +179,7 @@ interface ScheduledRow {
   attachment_mime: string | null;
   attachment_kind: AttachmentKind | null;
   attachment_size: number | null;
+  group_action: string | null;
 }
 
 const MEDIA_KINDS = new Set<MessageKind>(['image', 'video', 'audio', 'document', 'sticker']);
@@ -196,7 +202,7 @@ export class Store {
     const { user_version: version } = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
     if (version >= SCHEMA_VERSION) return;
     this.db.exec(SCHEMA_V1);
-    for (const [table, column, definition] of V2_COLUMNS) {
+    for (const [table, column, definition] of ADDED_COLUMNS) {
       const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
       if (!columns.some((c) => c.name === column)) {
         this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -590,6 +596,7 @@ export class Store {
       rule: parseRule(r),
       status: r.status,
       attachment: rowAttachment(r),
+      groupAction: parseGroupAction(r),
       lastError: r.last_error ?? undefined,
       lastSentAt: r.last_sent_at ?? undefined,
       sentCount: r.sent_count,
@@ -608,8 +615,8 @@ export class Store {
       .prepare(
         `INSERT INTO scheduled_messages
            (target, chat_id, body, anchor_at, send_at, repeat, rule, status, created_at,
-            attachment_path, attachment_name, attachment_mime, attachment_kind, attachment_size)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
+            attachment_path, attachment_name, attachment_mime, attachment_kind, attachment_size, group_action)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.target,
@@ -625,6 +632,7 @@ export class Store {
         a?.mimetype ?? null,
         a?.kind ?? null,
         a?.size ?? null,
+        input.groupAction ? JSON.stringify(input.groupAction) : null,
       );
     return Number(result.lastInsertRowid);
   }
@@ -639,6 +647,7 @@ export class Store {
       'send_at = ?',
       'repeat = ?',
       'rule = ?',
+      'group_action = ?',
       "status = 'pending'",
       'last_error = NULL',
     ];
@@ -650,6 +659,7 @@ export class Store {
       input.sendAt,
       input.rule.repeat,
       JSON.stringify(input.rule),
+      input.groupAction ? JSON.stringify(input.groupAction) : null,
     ];
     if (input.attachment !== undefined) {
       const a = input.attachment;
@@ -718,6 +728,15 @@ function parseRule(r: Pick<ScheduledRow, 'rule' | 'repeat'>): RepeatRule {
   return { repeat: r.repeat };
 }
 
+function parseGroupAction(r: Pick<ScheduledRow, 'group_action'>): GroupAction | undefined {
+  if (!r.group_action) return undefined;
+  try {
+    return JSON.parse(r.group_action) as GroupAction;
+  } catch {
+    return undefined;
+  }
+}
+
 function rowAttachment(r: ScheduledRow): Attachment | undefined {
   if (!r.attachment_path) return undefined;
   return {
@@ -739,6 +758,7 @@ function toDue(r: ScheduledRow): DueMessage {
     sendAt: r.send_at,
     rule: parseRule(r),
     attachment: rowAttachment(r),
+    groupAction: parseGroupAction(r),
   };
 }
 

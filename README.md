@@ -61,6 +61,7 @@ Then, in WhatsApp on your phone, open **Linked devices → Link a device** and s
 - Send once, or repeat every day, every weekday, every week, month or year
 - Custom repeats: every N days, weeks or months, on chosen days of the week, with an optional end date
 - Send to several chats at once, attach a photo, video or document, or post to your status
+- Schedule group settings changes (for groups you admin): who can send messages, who can edit info or add members, approval for new members, disappearing messages, the group's name and description, and resetting the invite link. On/off settings can switch back automatically, for example "only admins can send messages" every night from 22:00 to 07:00
 - A preview of the next send times before you save
 - Edit, cancel, or "Send now"; if the computer was off at the scheduled time, the message is marked *Missed* rather than sent hours late
 

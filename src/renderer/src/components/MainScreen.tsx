@@ -147,11 +147,12 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
               setDraft({
                 id: item.id,
                 target: item.target,
-                chatIds: item.target === 'chat' ? [item.chatId] : [],
+                chatIds: item.target === 'status' ? [] : [item.chatId],
                 body: item.body,
                 sendAt: Math.max(item.sendAt, Date.now() + 5 * 60_000),
                 rule: item.rule,
                 existingAttachment: item.attachment,
+                groupAction: item.groupAction,
               })
             }
           />
@@ -162,6 +163,7 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
             connected={connected}
             onOpenImage={setViewer}
             onCall={openCalls}
+            onScheduleGroupChange={(chatId) => setDraft({ target: 'group', chatIds: [chatId], body: '' })}
             onSchedule={(body, attachmentPath, clearComposer) =>
               setDraft({ chatIds: [selectedChat.id], body, attachmentPath, onSaved: clearComposer })
             }

@@ -62,18 +62,17 @@ export function formatDateTime(ms: number): string {
     : dateTimeWithYearFormat.format(date);
 }
 
-/** "in 2 hours", "in 3 days", "5 minutes ago" */
-export function formatRelative(ms: number): string {
-  const diff = ms - Date.now();
+/** "in 2 hours", "tomorrow", "in 3 days", "5 minutes ago" */
+export function formatRelative(ms: number, now = Date.now()): string {
+  const diff = ms - now;
   const abs = Math.abs(diff);
-  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ['day', 86_400_000],
-    ['hour', 3_600_000],
-    ['minute', 60_000],
-  ];
-  for (const [unit, size] of units) {
-    if (abs >= size) return relativeFormat.format(Math.round(diff / size), unit);
-  }
+  // Beyond a few hours, count calendar days: Wednesday 7:00 seen on Monday evening is
+  // "in 2 days", even though it's only about 37 hours away.
+  const startOfDay = (t: number) => new Date(new Date(t).toDateString()).getTime();
+  const days = Math.round((startOfDay(ms) - startOfDay(now)) / 86_400_000);
+  if (days !== 0 && abs >= 6 * 3_600_000) return relativeFormat.format(days, 'day');
+  if (abs >= 3_600_000) return relativeFormat.format(Math.round(diff / 3_600_000), 'hour');
+  if (abs >= 60_000) return relativeFormat.format(Math.round(diff / 60_000), 'minute');
   return diff >= 0 ? 'in less than a minute' : 'just now';
 }
 

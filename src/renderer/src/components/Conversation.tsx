@@ -53,6 +53,7 @@ export function Conversation({
   onSchedule,
   onOpenImage,
   onCall,
+  onScheduleGroupChange,
 }: {
   chat: ChatSummary;
   connected: boolean;
@@ -60,6 +61,8 @@ export function Conversation({
   onOpenImage: (url: string) => void;
   /** Opens WhatsApp Web for calling this person. */
   onCall: (chatId: string) => void;
+  /** Opens the schedule dialog for a settings change in this group. */
+  onScheduleGroupChange: (chatId: string) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasOlder, setHasOlder] = useState(false);
@@ -236,7 +239,13 @@ export function Conversation({
         <Composer ref={composer} chatId={chat.id} connected={connected} onSchedule={onSchedule} />
         {dragging && <div className="drop-hint">Drop files to send them</div>}
       </div>
-      {showInfo && chat.isGroup && <GroupInfoPanel chatId={chat.id} onClose={() => setShowInfo(false)} />}
+      {showInfo && chat.isGroup && (
+        <GroupInfoPanel
+          chatId={chat.id}
+          onClose={() => setShowInfo(false)}
+          onScheduleChange={() => onScheduleGroupChange(chat.id)}
+        />
+      )}
     </div>
   );
 }

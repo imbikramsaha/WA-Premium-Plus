@@ -1,12 +1,22 @@
 import { useEffect, useState } from 'react';
+import { ephemeralLabel } from '../../../shared/group-actions';
 import type { GroupInfo } from '../../../shared/types';
 import { errorMessage } from '../format';
 import { Avatar } from './Avatar';
-import { CloseIcon } from './Icons';
+import { ClockIcon, CloseIcon } from './Icons';
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 
-export function GroupInfoPanel({ chatId, onClose }: { chatId: string; onClose: () => void }) {
+export function GroupInfoPanel({
+  chatId,
+  onClose,
+  onScheduleChange,
+}: {
+  chatId: string;
+  onClose: () => void;
+  /** Opens the schedule dialog for a settings change in this group. */
+  onScheduleChange: () => void;
+}) {
   const [info, setInfo] = useState<GroupInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -63,14 +73,41 @@ export function GroupInfoPanel({ chatId, onClose }: { chatId: string; onClose: (
             </span>
           </div>
           {info.description && <p className="group-description">{info.description}</p>}
-          <div className="group-flags">
-            {info.announce && <span className="pill">Only admins can send messages</span>}
-            {info.restrict && <span className="pill">Only admins can edit info</span>}
-          </div>
-          {info.amAdmin && (
-            <button className="button" onClick={() => void copyInvite()}>
-              {copied ? 'Invite link copied' : 'Copy invite link'}
-            </button>
+          <h4>Settings</h4>
+          <dl className="group-settings">
+            <div>
+              <dt>Send messages</dt>
+              <dd>{info.announce ? 'Only admins' : 'Everyone'}</dd>
+            </div>
+            <div>
+              <dt>Edit group info</dt>
+              <dd>{info.restrict ? 'Only admins' : 'Everyone'}</dd>
+            </div>
+            <div>
+              <dt>Add members</dt>
+              <dd>{info.adminsAddMembers ? 'Only admins' : 'Everyone'}</dd>
+            </div>
+            <div>
+              <dt>Approve new members</dt>
+              <dd>{info.joinApproval ? 'On' : 'Off'}</dd>
+            </div>
+            <div>
+              <dt>Disappearing messages</dt>
+              <dd>{ephemeralLabel(info.ephemeralSeconds)}</dd>
+            </div>
+          </dl>
+          {info.amAdmin ? (
+            <div className="group-actions">
+              <button className="button primary" onClick={onScheduleChange}>
+                <ClockIcon size={16} />
+                Schedule a change
+              </button>
+              <button className="button" onClick={() => void copyInvite()}>
+                {copied ? 'Invite link copied' : 'Copy invite link'}
+              </button>
+            </div>
+          ) : (
+            <p className="muted small">Only group admins can change or schedule changes to these settings.</p>
           )}
           <h4>{info.participants.length} members</h4>
           {info.participants.length > 8 && (

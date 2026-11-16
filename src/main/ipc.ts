@@ -1,8 +1,9 @@
 import { copyFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { dialog, ipcMain, shell, systemPreferences } from 'electron';
+import { inverseGroupAction, normalizeGroupAction } from '../shared/group-actions';
 import { firstOccurrence, normalizeRule } from '../shared/schedule';
-import type { ScheduleTarget } from '../shared/types';
+import type { GroupAction, RepeatRule, ScheduleTarget } from '../shared/types';
 import { describeFile, keepAttachment } from './media';
 import type { Scheduler } from './scheduler';
 import type { Attachment, NewSchedule, Store } from './store';
@@ -35,11 +36,13 @@ interface ParsedScheduleInput {
   sendAt: number;
   rule: NewSchedule['rule'];
   attachmentPath?: string | null;
+  groupAction?: GroupAction;
+  revertAt?: number;
 }
 
 function parseScheduleInput(value: unknown): ParsedScheduleInput {
   const input = (value ?? {}) as Record<string, unknown>;
-  const target = input.target === 'status' ? 'status' : 'chat';
+  const target: ScheduleTarget = input.target === 'status' ? 'status' : input.target === 'group' ? 'group' : 'chat';
   const sendAt = input.sendAt;
   if (typeof sendAt !== 'number' || !Number.isFinite(sendAt)) throw new Error('Pick a date and time.');
   if (sendAt < Date.now() - 60_000) throw new Error('Pick a time in the future.');
@@ -47,11 +50,26 @@ function parseScheduleInput(value: unknown): ParsedScheduleInput {
   if (rule.endAt !== undefined && rule.endAt < sendAt) throw new Error('The end date is before the first send.');
 
   let chatIds: string[] = ['status@broadcast'];
-  if (target === 'chat') {
+  if (target !== 'status') {
     const ids = Array.isArray(input.chatIds) ? input.chatIds : [];
     chatIds = [...new Set(ids.map((id) => requireString(id, 'Chat')))];
-    if (chatIds.length === 0) throw new Error('Choose at least one chat.');
+    if (chatIds.length === 0) throw new Error(target === 'group' ? 'Choose at least one group.' : 'Choose at least one chat.');
     if (chatIds.length > MAX_RECIPIENTS) throw new Error(`You can pick up to ${MAX_RECIPIENTS} chats at once.`);
+  }
+
+  if (target === 'group') {
+    if (chatIds.some((id) => !id.endsWith('@g.us'))) throw new Error('Group settings can only be scheduled for groups.');
+    if (input.attachmentPath) throw new Error("A group settings change can't include a file.");
+    const groupAction = normalizeGroupAction(input.groupAction);
+    let revertAt: number | undefined;
+    if (input.revertAt !== undefined && input.revertAt !== null) {
+      if (!inverseGroupAction(groupAction)) throw new Error("This change can't be switched back automatically.");
+      if (typeof input.revertAt !== 'number' || !Number.isFinite(input.revertAt) || input.revertAt <= sendAt) {
+        throw new Error('The time to switch back must be after the change.');
+      }
+      revertAt = input.revertAt;
+    }
+    return { target, chatIds, body: '', sendAt, rule, groupAction, revertAt };
   }
 
   const attachmentPath = input.attachmentPath;
@@ -61,6 +79,14 @@ function parseScheduleInput(value: unknown): ParsedScheduleInput {
   const body = optionalString(input.body).trim();
   if (!body && !attachmentPath) throw new Error('Write a message or attach a file.');
   return { target, chatIds, body, sendAt, rule, attachmentPath };
+}
+
+/**
+ * The "switch back" action runs a fixed time after the change, so its series must end that
+ * much later too; otherwise the last switch-back would be skipped and the group left changed.
+ */
+function shiftEnd(rule: RepeatRule, offsetMs: number): RepeatRule {
+  return rule.endAt === undefined ? rule : { ...rule, endAt: rule.endAt + offsetMs };
 }
 
 /** Statuses can only show a photo or a video. */
@@ -159,6 +185,37 @@ export function registerIpc({
   ipcMain.handle('wapp:listScheduled', () => store.listScheduled());
   ipcMain.handle('wapp:createScheduled', async (_e, value: unknown) => {
     const input = parseScheduleInput(value);
+    if (input.target === 'group' && input.groupAction) {
+      const action = input.groupAction;
+      const revert = input.revertAt !== undefined ? inverseGroupAction(action) : null;
+      store.transaction(() => {
+        for (const chatId of input.chatIds) {
+          store.createScheduled({
+            target: 'group',
+            chatId,
+            body: '',
+            sendAt: firstOccurrence(input.sendAt, input.rule),
+            anchorAt: input.sendAt,
+            rule: input.rule,
+            groupAction: action,
+          });
+          if (revert && input.revertAt !== undefined) {
+            const rule = shiftEnd(input.rule, input.revertAt - input.sendAt);
+            store.createScheduled({
+              target: 'group',
+              chatId,
+              body: '',
+              sendAt: firstOccurrence(input.revertAt, rule),
+              anchorAt: input.revertAt,
+              rule,
+              groupAction: revert,
+            });
+          }
+        }
+      });
+      scheduledChanged();
+      return;
+    }
     await checkStatusAttachment(input.target, input.attachmentPath ?? undefined);
     const attachment: Attachment | null = input.attachmentPath
       ? await keepAttachment(input.attachmentPath, attachmentsDir)

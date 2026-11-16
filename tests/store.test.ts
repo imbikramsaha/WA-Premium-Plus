@@ -35,6 +35,12 @@ describe('Store', () => {
     assert.deepEqual(scheduled!.rule, { repeat: 'weekly' });
     assert.equal(scheduled!.target, 'chat');
     assert.equal(scheduled!.chatName, 'Priya');
+    assert.equal(scheduled!.groupAction, undefined);
+    // Upgraded all the way to the current version, including the group-change column.
+    const upgraded = new DatabaseSync(file);
+    assert.equal((upgraded.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 3);
+    const columns = (upgraded.prepare('PRAGMA table_info(scheduled_messages)').all() as Array<{ name: string }>).map((c) => c.name);
+    assert.ok(columns.includes('group_action'));
   });
 
   it('merges a privacy-ID chat into the phone-number chat', () => {

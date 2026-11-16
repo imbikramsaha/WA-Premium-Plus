@@ -37,6 +37,7 @@
 - [x] Scheduled status posts
 - [ ] Content calendar view
 - [x] Send one scheduled message to several chats
+- [x] Scheduled group settings changes, with automatic switch-back for on/off settings
 
 ## Automation
 - [ ] Quick replies with `/shortcut`
