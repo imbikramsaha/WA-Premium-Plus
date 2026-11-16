@@ -545,6 +545,34 @@ export interface Webhook {
   lastAt?: number;
 }
 
+// --- Data ---
+
+export type ExportFormat = 'txt' | 'html' | 'csv' | 'json';
+
+export interface ReplyTimes {
+  /** Median reply time in seconds; undefined without data. */
+  median?: number;
+  count: number;
+  /** Replies within 5 minutes, 5–60 minutes, 1–6 hours, 6–24 hours. */
+  buckets: [number, number, number, number];
+}
+
+export interface Insights {
+  days: number;
+  /** Start of the range (Unix ms). */
+  from: number;
+  totals: { sent: number; received: number; chats: number; autoReplies: number; broadcastSent: number; calls: number };
+  /** The same totals for the period before, for comparison. */
+  previous: { sent: number; received: number; chats: number };
+  /** One entry per day, oldest first ("2026-11-16"). */
+  daily: Array<{ day: string; sent: number; received: number }>;
+  /** Messages by weekday (0 = Sunday) and hour, in this computer's time zone. */
+  heatmap: number[][];
+  topChats: Array<{ chatId: string; name: string; sent: number; received: number }>;
+  /** Replies in one-to-one chats (within 24 hours). */
+  replyTimes: { mine: ReplyTimes; theirs: ReplyTimes };
+}
+
 /** A file to send right away, either from disk or pasted bytes. */
 export type OutgoingFile =
   | { path: string }
@@ -671,6 +699,15 @@ export interface WappApi {
   listOptOuts(): Promise<OptOut[]>;
   addOptOut(jid: string): Promise<void>;
   removeOptOut(jid: string): Promise<void>;
+
+  // Data
+  /** Exports a chat; asks where to save it. Returns the saved path, or null if cancelled. */
+  exportChat(chatId: string, format: ExportFormat, includeMedia: boolean): Promise<string | null>;
+  /** Exports every chat into a folder. */
+  exportAllChats(format: ExportFormat, includeMedia: boolean): Promise<string | null>;
+  /** Asks where to save a text file (e.g. a CSV) and saves it. */
+  saveTextFile(defaultName: string, content: string): Promise<string | null>;
+  getInsights(days: number): Promise<Insights>;
 
   // Webhooks
   listWebhooks(): Promise<Webhook[]>;

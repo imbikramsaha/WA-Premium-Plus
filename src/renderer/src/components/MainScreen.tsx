@@ -36,6 +36,8 @@ export interface MainScreenExtras {
   conversation?: ConversationExtras;
   /** Dialogs the extras open. */
   overlay?: ReactNode;
+  /** Opens the dialog for exporting every chat. */
+  openExport?: () => void;
 }
 
 export function MainScreen({ connection, extras }: { connection: ConnectionState; extras?: MainScreenExtras }) {

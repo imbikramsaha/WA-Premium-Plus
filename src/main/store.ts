@@ -1056,6 +1056,18 @@ export class Store {
     return this.decorate(chatId, rows.map((r) => this.toMessage(r, false)));
   }
 
+  /** Every message in a chat, oldest first (for exports). */
+  allMessages(chatId: string): StoredMessage[] {
+    const rows = this.db
+      .prepare(
+        `SELECT m.*, COALESCE(ct.name, ct.notify) AS contact_name
+         FROM messages m LEFT JOIN contacts ct ON ct.id = m.author
+         WHERE m.chat_id = ? ORDER BY m.timestamp ASC, m.rowid ASC`,
+      )
+      .all(chatId) as unknown as MessageRow[];
+    return this.decorate(chatId, rows.map((r) => this.toMessage(r, false)));
+  }
+
   /** About `half` messages before and after one message, oldest first. */
   messagesAround(chatId: string, messageId: string, half = 50): ChatMessage[] {
     const target = this.db
