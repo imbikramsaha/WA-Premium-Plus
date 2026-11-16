@@ -4,6 +4,7 @@
 import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import makeWASocket, {
+  BufferJSON,
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
@@ -64,6 +65,18 @@ async function currentWaWebVersion(): Promise<WaVersion | undefined> {
   if (fromWeb?.isLatest) return fromWeb.version;
   const fromBaileys = await fetchLatestBaileysVersion().catch(() => null);
   return fromBaileys?.version;
+}
+
+const EXPIRED_STATUSES = new Set([403, 404, 410]);
+
+function httpStatusOf(err: unknown): number | undefined {
+  const e = err as { output?: { statusCode?: number }; status?: number; data?: { status?: number } } | undefined;
+  return e?.output?.statusCode ?? e?.status ?? e?.data?.status;
+}
+
+function friendlyDownloadError(status: number | undefined): string {
+  if (status && EXPIRED_STATUSES.has(status)) return 'This file has expired. Open it on your phone.';
+  return "Couldn't download this file. Check your connection and try again.";
 }
 
 /** Channel media isn't encrypted: fetch it straight from WhatsApp's media servers. */
@@ -245,17 +258,33 @@ export class WhatsApp {
     if (existing) return existing;
     const message = store.getMessage(chatId, messageId);
     if (!message?.raw) throw new Error('This media is no longer available here. Open it on your phone.');
-    const raw = reviveMessage(message.raw);
-    const buffer = chatId.endsWith('@newsletter') ? await downloadChannelMedia(raw) : await downloadMediaMessage(
-      raw,
-      'buffer',
-      {},
-      {
-        logger,
-        // Old media links expire; ask the phone to upload the file again.
-        reuploadRequest: (msg: WAMessage) => this.requireSocket().updateMediaMessage(msg),
-      },
-    );
+    let raw = reviveMessage(message.raw);
+    const isChannel = chatId.endsWith('@newsletter');
+    const fetchMedia = (msg: WAMessage) =>
+      isChannel
+        ? downloadChannelMedia(msg)
+        : downloadMediaMessage(msg, 'buffer', {}, {
+            logger,
+            reuploadRequest: (m: WAMessage) => this.requireSocket().updateMediaMessage(m),
+          });
+    let buffer: Buffer;
+    try {
+      buffer = await fetchMedia(raw);
+    } catch (err) {
+      // WhatsApp's media links expire (403/404/410). Ask the phone to upload the file again,
+      // then retry once. Baileys only does this itself for 404 and 410.
+      const status = httpStatusOf(err);
+      if (isChannel || !EXPIRED_STATUSES.has(status ?? 0) || !this.sock || !this.isOpen) {
+        throw new Error(friendlyDownloadError(status));
+      }
+      try {
+        raw = await this.sock.updateMediaMessage(raw);
+        buffer = await fetchMedia(raw);
+        store.updateRaw(chatId, messageId, JSON.stringify(raw, BufferJSON.replacer));
+      } catch {
+        throw new Error("This file has expired and your phone couldn't send it again. Open it on your phone.");
+      }
+    }
     const name = mediaFileName(chatId, messageId, message.media?.mimetype, message.media?.fileName);
     await mkdir(mediaDir, { recursive: true });
     await writeFile(join(mediaDir, name), buffer);

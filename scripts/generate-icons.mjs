@@ -10,9 +10,9 @@ import { deflateSync } from 'node:zlib';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // --- Logo geometry (512 x 512 design space, same as assets/logo.svg) ---
-const GRADIENT_FROM = [0x10, 0xb9, 0x81];
-const GRADIENT_TO = [0x04, 0x78, 0x57];
-const WHITE = [255, 255, 255];
+const GRADIENT_FROM = [0xea, 0xe9, 0xac];
+const GRADIENT_TO = [0xcb, 0xc9, 0x6d];
+const PLUS = [0x23, 0x23, 0x1a];
 const BLACK = [0, 0, 0];
 
 function inRoundedRect(x, y, left, top, width, height, radius) {
@@ -27,7 +27,7 @@ const inSquare = (x, y) => inRoundedRect(x, y, 0, 0, 512, 512, 112);
 
 function logoColor(x, y) {
   if (!inSquare(x, y)) return null;
-  if (inPlus(x, y)) return WHITE;
+  if (inPlus(x, y)) return PLUS;
   const t = Math.min(1, Math.max(0, (x + y) / 1024));
   return GRADIENT_FROM.map((from, i) => from + (GRADIENT_TO[i] - from) * t);
 }

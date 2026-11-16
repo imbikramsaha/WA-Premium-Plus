@@ -78,6 +78,12 @@ export const PlayIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const PauseIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M8 5v14M16 5v14" />
+  </Svg>
+);
+
 export const FileIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />

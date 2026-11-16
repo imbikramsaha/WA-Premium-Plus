@@ -168,9 +168,25 @@ export function MainScreen({ connection }: { connection: ConnectionState }) {
           />
         ) : (
           <div className="empty-state">
-            <Logo size={72} />
+            <div className="empty-logo">
+              <Logo size={72} />
+            </div>
             <h2>WA Premium Plus</h2>
-            <p className="muted">Pick a chat to start messaging, or schedule a message to go out later.</p>
+            <p>Pick a chat to start messaging, or schedule a message to go out later.</p>
+            <div className="feature-list">
+              <div className="feature">
+                <ClockIcon size={20} />
+                Schedule and repeat messages
+              </div>
+              <div className="feature">
+                <ChatsIcon size={20} />
+                Send to many chats at once
+              </div>
+              <div className="feature">
+                <PhoneIcon size={20} />
+                Calls through WhatsApp Web
+              </div>
+            </div>
           </div>
         )}
       </main>

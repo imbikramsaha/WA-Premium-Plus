@@ -48,7 +48,11 @@ function createWindow(showOnReady = true): void {
     show: false,
     autoHideMenuBar: true,
     icon: join(resourcesDir, 'icon.png'),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f1715' : '#f4f6f5',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0d0d0b' : '#f3f3ee',
+    // macOS: content runs under an inset title bar, like native Mac apps.
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 20, y: 18 } }
+      : {}),
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
       contextIsolation: true,

@@ -15,6 +15,10 @@
   <img alt="Status: early development" src="https://img.shields.io/badge/status-early%20development-orange.svg">
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/chat-light.png" width="860" alt="WA Premium Plus: chat list and a conversation with a voice note, a document and a video" />
+</p>
+
 > **Unofficial.** WA Premium Plus is an independent open-source project. It is not affiliated with, endorsed by or sponsored by WhatsApp or Meta. "WhatsApp" is a trademark of WhatsApp LLC.
 
 ## What it is
@@ -67,6 +71,14 @@ Then, in WhatsApp on your phone, open **Linked devices → Link a device** and s
 - Keeps running in the system tray when you close the window, so scheduled messages still go out
 - Optional "Open at login" (macOS and Windows)
 - Light and dark themes that follow your system
+
+**Design**
+- Light and dark themes in Citrus, the yellow of Apple's MacBook Neo
+- A native inset title bar on macOS
+
+| Dark theme | Scheduled messages |
+|---|---|
+| ![Dark theme](docs/screenshots/chat-dark.png) | ![Scheduled messages](docs/screenshots/scheduled-light.png) |
 
 See the [roadmap](docs/ROADMAP.md) for what comes next.
 

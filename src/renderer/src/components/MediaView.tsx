@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ChatMessage } from '../../../shared/types';
 import { errorMessage, formatBytes, formatDuration, kindLabel } from '../format';
 import { DownloadIcon, FileIcon, PlayIcon } from './Icons';
+import { VoicePlayer } from './VoicePlayer';
 
 // One download per message, shared by every component that shows it.
 const downloads = new Map<string, Promise<string>>();
@@ -118,7 +119,7 @@ export function MediaView({ message, onOpenImage }: { message: ChatMessage; onOp
     if (url) {
       return (
         <div className="media-audio">
-          <audio src={url} controls preload="metadata" />
+          <VoicePlayer url={url} seconds={media.seconds} seed={message.id} />
           {media.ptt === false && <span className="media-note">Audio file</span>}
         </div>
       );

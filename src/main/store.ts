@@ -466,6 +466,11 @@ export class Store {
     return row ? this.toMessage(row, true) : undefined;
   }
 
+  /** Replaces the stored WhatsApp payload, e.g. after the phone re-uploaded expired media. */
+  updateRaw(chatId: string, messageId: string, raw: string): void {
+    this.db.prepare('UPDATE messages SET raw = ? WHERE chat_id = ? AND id = ?').run(raw, chatId, messageId);
+  }
+
   setLocalFile(chatId: string, messageId: string, fileName: string): void {
     this.db.prepare('UPDATE messages SET local_file = ? WHERE chat_id = ? AND id = ?').run(fileName, chatId, messageId);
   }
