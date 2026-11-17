@@ -13,7 +13,17 @@ export function ConnectScreen({ state }: { state: ConnectionState }) {
 
   useEffect(() => {
     void window.wapp.listAccounts().then(setAccounts);
-    return window.wapp.onEvent((e) => e.type === 'pairing-code' && setCode(e.code));
+    return window.wapp.onEvent((e) => {
+      if (e.type !== 'pairing-code') return;
+      if (e.code) {
+        setCode(e.code);
+        setError(null);
+      } else {
+        // The connection that issued the code closed before the code was used.
+        setCode(null);
+        setError('That code expired before it was used. Get a new code and type it on your phone within a few minutes.');
+      }
+    });
   }, []);
 
   async function requestCode(e: FormEvent) {
@@ -87,7 +97,10 @@ export function ConnectScreen({ state }: { state: ConnectionState }) {
               <div className="pairing">
                 <span className="muted">Your code</span>
                 <strong className="pairing-code">{code}</strong>
-                <span className="muted small">Type it on your phone. It expires in a few minutes.</span>
+                <span className="muted small">
+                  On your phone, tap the WhatsApp notification (or Linked devices → Link a device → Link with phone number
+                  instead) and type this code. It works for a few minutes.
+                </span>
                 <button className="button small" onClick={() => setCode(null)}>
                   Use another number
                 </button>
@@ -108,6 +121,7 @@ export function ConnectScreen({ state }: { state: ConnectionState }) {
                 <button className="button primary" disabled={busy || !ready || phone.replace(/\D/g, '').length < 7}>
                   {busy ? 'Getting a code…' : ready ? 'Get code' : 'Connecting…'}
                 </button>
+                <span className="hint">Use the number of the phone you'll type the code on.</span>
                 {error && <p className="error small">{error}</p>}
               </form>
             )

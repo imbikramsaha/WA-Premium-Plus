@@ -104,6 +104,20 @@ const AVATAR_CONCURRENCY = 2;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** How long each QR code (and so a pending pairing code) stays valid while linking by phone number. */
+const PAIRING_QR_LIFETIME_MS = 4 * 60_000;
+const PAIRING_REQUEST_TIMEOUT_MS = 40_000;
+
+/** A request to link by phone number. */
+interface Pairing {
+  phone: string;
+  /** The code to type on the phone, once WhatsApp accepted the request. */
+  code?: string;
+  requested?: boolean;
+  resolve?: (code: string) => void;
+  reject?: (err: Error) => void;
+}
+
 type WaVersion = [number, number, number];
 
 /**
@@ -172,6 +186,8 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
   private readonly avatarQueued = new Set<string>();
   /** Pictures asked for before the connection opened; fetched once it does. */
   private readonly avatarWaiting = new Set<string>();
+  /** Linking by phone number, while it's in progress. */
+  private pairing: Pairing | null = null;
   private avatarsActive = 0;
   private readonly opts: WhatsAppOptions;
 
@@ -761,12 +777,43 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
   async requestPairingCode(phone: string): Promise<string> {
     const digits = phone.replace(/\D/g, '');
     if (digits.length < 7 || digits.length > 15) throw new Error('Enter your full phone number with the country code.');
-    const sock = this.sock;
-    if (!sock || this.state.linked) throw new Error('Wait for the QR code to appear, then try again.');
-    const code = await sock.requestPairingCode(digits);
-    const pretty = code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
-    this.opts.emit({ type: 'pairing-code', code: pretty });
-    return pretty;
+    if (this.state.linked) throw new Error('This account is already linked.');
+    if (this.opts.offline || this.stopped) throw new Error("WhatsApp isn't connected.");
+    this.pairing?.reject?.(new Error('Replaced by a new request.'));
+    return new Promise<string>((resolve, reject) => {
+      const pairing: Pairing = { phone: digits, resolve, reject };
+      this.pairing = pairing;
+      setTimeout(() => {
+        if (this.pairing === pairing && !pairing.code) {
+          this.pairing = null;
+          reject(new Error("Couldn't get a code from WhatsApp. Check your internet connection and try again."));
+        }
+      }, PAIRING_REQUEST_TIMEOUT_MS);
+      // Start a fresh connection whose codes stay valid long enough to type on the phone. The
+      // current one rotates QR codes and ends after a couple of minutes, taking the code with it.
+      clearTimeout(this.reconnectTimer);
+      const sock = this.sock;
+      this.sock = null;
+      sock?.end(undefined);
+      this.scheduleReconnect(0);
+    });
+  }
+
+  /** Asks WhatsApp for the code once the new connection is ready for linking. */
+  private async sendPairingRequest(sock: WASocket): Promise<void> {
+    const pairing = this.pairing;
+    if (!pairing || pairing.code || pairing.requested) return;
+    pairing.requested = true;
+    try {
+      const raw = await sock.requestPairingCode(pairing.phone);
+      const code = raw.length === 8 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw;
+      pairing.code = code;
+      pairing.resolve?.(code);
+      this.opts.emit({ type: 'pairing-code', code });
+    } catch (err) {
+      this.pairing = null;
+      pairing.reject?.(err instanceof Error ? err : new Error(String(err)));
+    }
   }
 
   /** Rejects an incoming call. */
@@ -1029,6 +1076,13 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
   private async connect(): Promise<void> {
     if (this.stopped) return;
     const { state: auth, saveCreds } = await useMultiFileAuthState(this.opts.authDir);
+    // Asking for a pairing code records the phone number as "me" before the phone confirms.
+    // Only a finished link has the account details; otherwise start linking afresh.
+    if (auth.creds.me && !auth.creds.account) {
+      auth.creds.me = undefined;
+      auth.creds.pairingCode = undefined;
+      await saveCreds();
+    }
     const linked = Boolean(auth.creds.me);
     this.setState({ status: 'connecting', linked });
 
@@ -1044,6 +1098,8 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
       browser: ['WA Premium Plus', 'Chrome', '1.0.0'],
       // Stay "offline" so the phone keeps showing notifications.
       markOnlineOnConnect: false,
+      // While linking by phone number, keep codes valid long enough to type them on the phone.
+      ...(this.pairing && !linked ? { qrTimeout: PAIRING_QR_LIFETIME_MS } : {}),
       // WhatsApp asks for a message again when a recipient couldn't decrypt it.
       getMessage: async (key) => {
         if (!key.id) return undefined;
@@ -1166,10 +1222,13 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
     if (qr) {
       const dataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 320 });
       if (this.sock === sock) this.setState({ status: 'qr', linked: false, qr: dataUrl });
+      // The connection is ready for linking: send a pending phone-number request now.
+      if (this.sock === sock && this.pairing) void this.sendPairingRequest(sock);
     }
 
     if (connection === 'open') {
       this.retries = 0;
+      this.pairing = null;
       const me = sock.user;
       this.setState({
         status: 'open',
@@ -1186,6 +1245,13 @@ export class WhatsApp extends EventEmitter<WhatsAppEvents> {
     if (connection === 'close') {
       this.sock = null;
       const code = (lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode;
+      // A pairing code only works on the connection that asked for it. After the phone
+      // confirms, WhatsApp asks for a restart: that's success, not an expired code.
+      if (this.pairing?.code) {
+        const expired = code !== DisconnectReason.restartRequired;
+        this.pairing = null;
+        if (expired) this.opts.emit({ type: 'pairing-code', code: '' });
+      }
       if (code === DisconnectReason.loggedOut) {
         // The device was removed from the phone: start over with a fresh QR code.
         await this.resetAccount();

@@ -143,11 +143,14 @@ export class Updater {
 
   /** Looks for a newer version; downloads it when automatic downloads are on. */
   async check(): Promise<UpdateState> {
-    if (this.state.status === 'downloading' || this.state.status === 'ready') return this.state;
-    this.set({ status: 'checking', error: undefined });
+    if (this.state.status === 'downloading') return this.state;
+    // A downloaded update stays ready unless an even newer version has come out since.
+    const readyVersion = this.state.status === 'ready' ? this.state.latest : undefined;
+    if (!readyVersion) this.set({ status: 'checking', error: undefined });
     try {
       const release = await this.latestRelease();
       const latest = release.tag_name.replace(/^v/i, '');
+      if (readyVersion && compareVersions(latest, readyVersion) <= 0) return this.state;
       const base = { latest, notes: release.body ?? '', url: release.html_url, checkedAt: Date.now() };
       if (release.draft || release.prerelease || compareVersions(latest, this.opts.currentVersion) <= 0) {
         this.set({ status: 'up-to-date', ...base });
@@ -170,6 +173,7 @@ export class Updater {
       if (this.opts.settings().autoDownloadUpdates) void this.download().catch(() => undefined);
       return this.state;
     } catch (err) {
+      if (readyVersion) return this.state; // keep the update that's already downloaded
       this.set({ status: 'error', error: `Couldn't check for updates: ${err instanceof Error ? err.message : String(err)}`, checkedAt: Date.now() });
       return this.state;
     }

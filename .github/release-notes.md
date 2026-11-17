@@ -9,6 +9,8 @@ Free, open-source WhatsApp desktop app with scheduling and automation. Unofficia
 - **Insights** and **exports** of chats and group members.
 - **Updates itself** from GitHub Releases, verified against SHA256SUMS.
 
+**0.5.2** fixes linking by phone number: the code now stays valid until WhatsApp's own limit (about 3 minutes), the app no longer treats an unfinished link as linked, and it tells you when a code expires. Downloaded updates are replaced if a newer version comes out.
+
 **0.5.1** polishes alignment, spacing, edges and sizes on every screen, keeps pages and the message column at a comfortable width on large and full-screen windows, and fixes small-window overflow.
 
 Versions before 0.5 don't update themselves: install this one with a command below, and later versions arrive automatically.

@@ -110,4 +110,20 @@ describe('Updater', () => {
     assert.equal(state.status, 'error');
     assert.match(state.error!, /403/);
   });
+
+  it('moves on to a newer version that comes out after one was downloaded', async () => {
+    const first = fakeGitHub('0.5.1', Buffer.from('first'));
+    const second = fakeGitHub('0.5.2', Buffer.from('second'));
+    let current = first;
+    const { u, cacheDir } = updater('mac', ((url: string) => current(url)) as typeof fetch);
+    await u.check();
+    await u.download();
+    assert.deepEqual([u.current.status, u.current.latest], ['ready', '0.5.1']);
+    assert.equal((await u.check()).status, 'ready'); // nothing newer: stays ready
+    current = second;
+    await u.check();
+    await u.download();
+    assert.deepEqual([u.current.status, u.current.latest], ['ready', '0.5.2']);
+    assert.deepEqual(readFileSync(join(cacheDir, '0.5.2', 'WA-Premium-Plus-mac-arm64.dmg')), Buffer.from('second'));
+  });
 });
