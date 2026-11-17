@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# A newer push replaces an older run that's still going: fewer jobs waiting for GitHub's
+# limited macOS runners (queued macOS jobs have been cancelled for lack of capacity).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build (${{ matrix.os }})
